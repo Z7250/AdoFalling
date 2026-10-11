@@ -24,6 +24,12 @@ namespace AdoFalling
         private float _fps;
         private double _clockNow;
 
+        internal void Dispose()
+        {
+            if (_white != null) UnityEngine.Object.Destroy(_white);
+            _white = null;
+        }
+
         private Texture2D White()
         {
             if (_white == null)

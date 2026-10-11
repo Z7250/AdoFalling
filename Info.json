@@ -1,0 +1,9 @@
+{
+  "Id": "AdoFalling",
+  "DisplayName": "AdoFalling",
+  "Author": "dsh",
+  "Version": "0.7.0",
+  "ManagerVersion": "0.32.5",
+  "AssemblyName": "AdoFalling.dll",
+  "EntryMethod": "AdoFalling.Main.Load"
+}

@@ -1,476 +1,124 @@
-# AdoFalling — 冰与火之舞「下落式音游」叠加层 MOD
+# AdoFalling
 
-在原版《A Dance of Fire and Ice》画面上叠加一个下落式音游（8K/VSRG 风格）的界面：
-**判定线、轨道、下落按键不透明，其余全部透明**，所以原版谱面（星球、方块、路径）依然完整可见。
-本 MOD 只做「可视化读谱」，不接管判定：打歌仍由原版负责，叠加层把谱面按时间轴显示成下落按键。
+《A Dance of Fire and Ice》的下落式读谱叠加层，使用 **Unity Mod Manager（UMM）** 加载。当前版本为 **0.7.0**。
 
----
+叠加层显示八条轨道、下落音符、长按尾迹和命中特效，原版星球与路径仍然可见。音符轨道表示建议指法；实际输入和判定仍由游戏处理，模组不会强制检查是否按了对应的轨道键。
 
-## 1. 当前状态
+## 安装
 
-| 项目 | 状态 |
-|---|---|
-| 游戏版本 | 3.3.1（Unity 6000.3.10f1，build 24397494） |
-| 加载器 | BepInEx 5.4.23.5（已装到游戏目录，用 `version.dll` 作 Doorstop 代理） |
-| 插件 | `BepInEx\plugins\AdoFalling.dll`（已安装） |
-| 实机验证 | 插件加载 ✅、反射绑定 ✅、叠加层渲染 ✅、读谱（168 音符）✅、下落时间轴 ✅、判定钩子 ✅ |
+1. 为游戏安装 Unity Mod Manager。此版本要求 UMM **0.32.5 或更新版本**；编译使用本机游戏 3.3.1 的 Unity 6000 程序集与 UMM 0.32.5。
+2. 将 `build/AdoFalling-0.7.0-UMM.zip` 拖入 UMM 的 Mods 页安装，或者把 `build/AdoFalling` 文件夹复制到游戏的 `Mods` 目录。
+3. 启动游戏，在 UMM 中启用 AdoFalling。首次加载会在模组目录生成 `settings.json`。
 
-### 验证截图
+手动安装后的结构：
 
-- `refs/qa_imgui.png` — 判定线 + 轨道叠加在原版标题画面上
-- `refs/qa_lane_top2.png` — 轨道自屏幕顶部下延到判定线，音符自上而下下落
-
-## 1.1 观感与性能要点
-
-- **轨道方向**：轨道是从**屏幕顶边**垂直向下延伸到判定线的条带，音符从顶部下落穿过轨道到达判定线。
-- **帧率与同步**：显示时钟**每帧直接读取游戏自己的歌曲时间**（`scrConductor.songposition_minusi`），
-  `显示时间 = 歌曲时间 + 偏移`。这样显示时间与游戏**同源**，误差恒等于 0，音符不可能与音乐逐渐脱节。
-
-  > 这一点踩过坑：早期版本为省开销只在 `PollInterval`（50ms）读一次、中间用"实测速率"外推。
-  > 外推速度永远无法与歌曲完全一致，误差会持续累积 —— 现象就是**音符与谱面越对不上**（面板上
-  > `step` 会小于 `dt`、`lead` 从初始值缓慢漂移）。`songposition_minusi` 本身由音频 DSP 时钟驱动、
-  > 每帧都在推进，所以直接每帧读取既准确又不会退回 20Hz。读取只走反射读一个字段，开销可忽略。
-
-- **读谱时机**：谱面在**关卡场景加载时**就已建好，所以只要 `scrLevelMaker` 存在且已有方块就开始读取
-  （判据是"关卡对象存在"，不是等到 `PlayerControl`）。
-- **反应时间（开场/倒计时）**：这是本轮修的核心问题。实测日志发现三件事叠加：
-  原版在很多情况下**根本不进入 `Countdown` 相位**（开场跳过、自动播放、重打时是 `Start → PlayerControl`）；
-  **谱面是在倒计时中途才可读的**（日志里 907 个音符在倒计时期间一次性生成）；
-  而且有些谱的**第一个音符 `HitTime` 是负数**。结果就是音符在音乐开始的一瞬间同时出现在判定位上，反应时间为 0。
-
-  现在改为**整体平移时间轴**（而不是钳制时钟）：令 `显示时钟 = 游戏时钟 + offset`，其中
-  `offset = 第一个音符时间 - 一整屏下落时间 - LeadInSeconds`。
-  于是**第一个音符保证从屏幕顶端开始下落**；整条时间轴刚性平移，**再长的倒计时也不会让音符越过判定线**，
-  也不受"谱面何时才可读"的影响。偏移在关卡真正开始后冻结，打歌途中不会变动。
-  开关：`Chart/CountdownLead`（默认 `true`）、`Chart/LeadInSeconds`（默认 `0.35`，额外余量）。
-
-- **长按音符**：`holdLength` 是节奏单位，需要换算成秒。插件复刻了原版 `scrLevelMaker` 的算法：
-  `halfTurn = scrMisc.GetTimeBetweenAngles(entryangle, exitangle, speed, bpm, isCW)`，
-  长按时长 `= holdLength * 2 * halfTurn`。绘制为从判定线向后延伸的**长条尾迹**
-  （长度 = 时长 × 下落速度，所以尾迹末端正好是松手时刻），透明度由 `Style/HoldBodyOpacity`（默认 `0.45`）控制。
-  读谱日志会报告数量，例如 `chart read: 907 notes ... holds 16`。
-
-- **判定动画**：挂钩游戏自身的 `scrPlayer.onHit`（`Action<scrFloor>`，游戏每次成功命中都会调用），
-  打中时会做三件事：
-  1. **被击中的音符立即消失**（不再继续落到判定线以下）；
-  2. **所在轨道整条泛白高亮** + 亮边，靠近判定线处最亮；
-  3. **判定线整体变白加粗并向外发光**，并在被打中的那条轨道上叠一道竖向光柱；
-  4. 判定线上浮出判定文字（文字**最后绘制**，不会被特效遮挡）。
-
-## 1.2 中文控制面板（F5）
-
-在**菜单界面左上角**会显示一行提示「**按 F5 调出控制面板**」，进入谱面后自动隐藏（判断依据是是否读到谱面）。
-所以不用记热键，打开游戏就能看到入口。
-
-按 **F5** 呼出**中文控制面板**，所有可调参数都在里面，**每个参数都有滑块 + 可直接输入数值的输入框**，
-改动**即时生效**，关闭面板（再按 F5）时**自动保存**到配置文件。
-
-面板外观：**40% 不透明度的黑色填充 + 蓝色细边框**，后面的游戏画面仍可透出。
-
-面板内容：
-
-| 分区 | 项目 |
-|---|---|
-| **显示（一键切换）** | ☑ 显示判定线　☑ 显示轨道　☑ 显示音符 / 长按　☑ 显示打击特效　☑ 显示判定文字 |
-| **判定线与轨道** | 判定线高度、轨道宽度、轨道间距 |
-| **音符** | 下落速度、音符高度 |
-| **对齐（判定与视觉）** | 音符提前量、提前量系数、开场余量、长按提前量、长按长度系数 |
-| **透明度** | 判定线、音符、轨道底色、轨道边框、长按尾迹 |
-| **行为开关** | 长按按住期间缩短、长按跳过松手方块、开场从顶端下落、音符倾斜、轨道右到左、显示诊断信息、自动播放 |
-| **操作** | 恢复默认 / 长按归零 / 清除统计数据 |
-
-每个开关行右侧都有 **[开]**（绿）或 **[关]**（红）的状态标记，不需要看勾选框判断。
-面板底部实时显示对齐实测值（最近误差 / 平均误差 / 样本数 / 建议）与**当前键盘选中项**。
-
-> 「显示判定线」「显示音符」两个勾选框就是**一键显隐**：把两个都取消，
-> 画面就只剩原版游戏本身；勾回来即恢复叠加层。
-> 面板本身**不受叠加层显隐影响**（否则隐藏后就无法调回来了）。
-
-### 键盘操作（重要）
-
-**本作通过 Rewired 接管输入，IMGUI 的鼠标点击会被吞掉**，所以面板**必须能用键盘操作**：
-
-| 按键 | 作用 |
-|---|---|
-| **↑ / ↓** | 选择上一项 / 下一项（当前项显示在面板底部，如 `[3] 判定线高度`） |
-| **← / →** | 调整当前项（按住连发；配合 Shift 加速 5 倍；开关类则切换） |
-| **Enter** | 切换当前项（开关类）/ 触发当前按钮（恢复默认、长按归零、清除统计） |
-| **Tab / 方向键** | 移动选择（同上 ↑↓） |
-
-鼠标若可用也可以直接拖滑块、点输入框、点按钮；两种方式都能用。
-
-### 谱面文件模式 —— 文件时间轴 + 八轨手组排键（`Chart/FilePath` + `F4`）
-
-这是现在的主用方式，读谱辅助**只依赖谱面文件**，不需要读取游戏当前的关卡：
-
-1. 在配置里把 `Chart/FilePath` 填成 .adofai 的完整路径（本机已默认填好
-   `tmp\OfficialCharts\CE-TX Dramatic Entrance!.adofai`）；
-2. 进关卡，在**第一个音符该打的时候按 F4**（`General/LoadKey`）。F4 会载入/刷新谱面文件，
-   并把“计划第一次按键”对齐到按下的瞬间；游戏本身仍需正常按键。
-3. 叠加层随后按文件显示整张谱面：时间轴沿用 [ReADOFAIMacro](https://github.com/TonyLimps/ReADOFAIMacro)
-   的旋转角、Twirl / Pause / SetSpeed 处理；轨道由与实时模式相同的八轨手组算法分配。
-   文件中的局部 BPM 会传给排键器，变速不会被误认为十六分加密。文件模式仍只生成普通音符。
-
-细节：
-
-- **按键 → 轨道**：屏幕从左到右为 `A S D F J K L ;`，左手 `A→S→D→F`，右手 `;→L→K→J`。
-  每手最多四音；更密时缩短手组周期，增加换手频率。
-- **重开**：死了重来后再按一次 F4 即可重新对齐；检测到歌曲回溯（重开）也会自动重新锚定，
-  但按 F4 最准。
-- **离开关卡**自动结束文件模式，下次进关卡再按 F4。
-- **微调**：`Chart/FileOffsetSeconds`（秒，正数 = 整体更晚）用来校准手感。
-- 日志里会打两行关键信息：
-  `chart read (file): ... anchor ...s`（本次锚点）与
-  `file chart sync check: live tile 1 at ...s, file anchor ...s (diff ...s)`——
-  diff 接近 0 说明 F4 按在该打第一个音符的时刻。
-- `F4` 在 `FilePath` 为空时 = 关闭文件模式，回到实时读谱。
-- 旧启动键如果是 `A/S/D/F/J/K/L/;`，会自动迁移为 F4，避免演奏时反复重置时间轴。
-
-### 实时模式（不填 `FilePath` 时）：`LaneMapping`
-
-不依赖文件、直接从游戏读谱时，轨道映射可选：
-
-- `Fingering`（默认）：以局部 BPM 的八分时长为基础，左右手按组交替，组内由外向内；
-- `Macro`：兼容旧配置的名称，行为与 `Fingering` 相同；F5 不再单独列出这个重复选项；
-- `Position` / `Cycle` / `Sequential`：按进入方向 / 按序号循环 / 按顺序。
-
-F5 面板 **排键 / 轨道映射 → 排键方式** 一行可用 ↑↓ 选中、←→ 或 Enter 切换；
-面板里还显示谱面文件是否已载入/已开始。
-
-### 八轨手组规则
-
-布局固定为八轨，单音优先使用中央的 F/J 食指；加密时逐渐启用外侧手指。
-
-| 每手组音符数 | 左手 | 右手 | 基础手组保持八分时 |
-|---|---|---|---|
-| 1 | F | J | 八分 |
-| 2 | D→F | K→J | 十六分 |
-| 3 | S→D→F | L→K→J | 二十四分 |
-| 4 | A→S→D→F | ;→L→K→J | 三十二分 |
-
-例如八分接十六分为 `F｜J｜DF｜KJ｜DF｜KJ`，不会因间隔变短而立刻每音换手。
-同一手在相邻轮次复用食指是首选；组内使用不同手指，避免密集同指重复。
-
-反拍通过调整手组边界或建立新相位处理，空拍不自动换手。排键器对每个音符位置保留最多
-12 个候选，比较一至四音分组：优先手组交替，惩罚极短间隔跨手，同时保留基础节奏。
-若一组容量不足，就减半周期；长按期间对应键不可复用，必要时使用其他手指或同手接组。
-命中时间、音符数量和长按长度保持读谱结果，排键只改轨道。
-
-`Chart/FingeringWindowMs` 保留旧配置键，F5 中改名为“换手保护(毫秒)”：
-它控制极短间隔跨手的惩罚，上限为局部手组周期的四分之一，不再作为音符细分的阈值。
-调参会重新排键，保留已命中状态与文件锚点。
-
-八轨默认宽度为 70px。旧配置的 `LaneWidth` 会继续生效，可在 F5 中调整或恢复默认。
-这些键名是读谱指引，插件仍由原版游戏负责输入与判定。
-
-
-
-| 按键 | 作用 |
-|---|---|
-| **F5** | 开 / 关中文控制面板（关闭时保存） |
-| **F8** | 显示 / 隐藏整个叠加层 |
-| **F7 / F9** | 普通音符更早 / 更晚过判定线（±0.01s，Shift = ±0.05s） |
-| **`-` / `=`** | 长按长条更晚 / 更早（±0.01s，Shift = ±0.05s） |
-| **`[` / `]`** | 长按长条长度缩放 |
-| **Backspace** | 长按微调归零 |
-| **F6** | 把当前对齐参数写进日志（排查用） |
-
-
-
-按 **F5** 打开/关闭**对齐调参面板**，不用改配置文件、不用重启：
-
-```
-=== AdoFalling alignment (F5 to save & close) ===
-judge err = 14 px   avg = 9 px   n = 23
-trim  = 0.000 s     lead fraction = 0.80
-display offset = -1.330 s   raw = 21.480 s
->> ALIGNED <<
-F7 = earlier     F9 = later     (+Shift = x5)
-END = reset trim     PgUp/PgDn = lead fraction
-notes 907   holds 16   onscreen 4   judgeY 886
+```text
+A Dance of Fire and Ice/
+  Mods/
+    AdoFalling/
+      Info.json
+      AdoFalling.dll
+      settings.json       # 首次加载生成，不在安装包中
 ```
 
-| 按键 | 作用 |
-|---|---|
-| **F5** | 打开 / 关闭对齐面板（关闭时**自动保存**到配置文件） |
-| **F7** | 普通音符**更早**过判定线（+0.01s；按住 Shift = +0.05s） |
-| **F9** | 普通音符**更晚**过判定线（−0.01s；按住 Shift = −0.05s） |
-| **`-`** | **长按长条更晚**（−0.01s；Shift = −0.05s） |
-| **`=`** | **长按长条更早**（+0.01s；Shift = +0.05s） |
-| **Backspace** | 长按微调归零 |
-| **`[` / `]`** | 长条长度缩放（±0.05，范围 0.2~3.0） |
-| **END** | 普通音符 `trim` 归零 |
-| **PgUp / PgDn** | 调整 `LeadFraction`（±0.05） |
+从旧版本迁移时，移走旧的 `BepInEx/plugins/AdoFalling.dll`，避免两份叠加层同时运行。其他模组的加载器和文件无需处理。旧的 BepInEx `.cfg` 不会自动导入，可在 F5 面板重新设置或将所需数值转写到 JSON。
 
-> `-` / `=` / `Backspace` / `[` / `]` **不需要打开 F5 面板**也能用，改完立即写回配置文件，
-> 方便一边打一边调。调整量会打到 BepInEx 日志（搜 `hold trim`）。
+在 UMM 中禁用会销毁叠加层，解除本模组的命中回调，恢复启用自动播放之前的状态，并保存配置。重新启用会建立新的运行实例。
 
-调参依据是面板上的 **`judge err` / `avg`**：这是插件在**每次命中瞬间实测**音符距判定线多少像素。
+## 八键指法
 
-- `avg` **为正** = 判定时音符还没到线（音符偏晚）→ 按 **F7**；
-- `avg` **为负** = 判定时音符已经过线（音符偏早）→ 按 **F9**；
-- 面板会给出 `>> ALIGNED <<` 或文字提示（`avg` 在 ±6px 内视为对齐）。
+屏幕默认从左到右是 `A S D F J K L ;`。左右食指分别对应 **F / J**。分配器按谱面的局部 BPM、速度变化和音符时间工作，默认以八分音符为换手周期，将细分音符分成同手组，组内由外向内轮指。
 
-调完后按 F5 关闭，值会写入 `BepInEx\config\com.dsh.adofalling.cfg` 的
-`Chart/LeadOffsetSeconds`（精调）与 `Chart/LeadFraction`（粗调）。
+| 每个换手周期内的音符数 | 左手 | 右手 | 常见节奏 |
+| --- | --- | --- | --- |
+| 1 | F | J | 八分音符 |
+| 2 | DF | KJ | 十六分音符 |
+| 3 | SDF | LKJ | 二十四分音符 |
+| 4 | ASDF | ;LKJ | 三十二分音符 |
 
+- 八分连打保持 `F J F J`；每只手在自己的下一次八分轮次继续用食指。
+- 八分接十六分可形成 `F J DF KJ`，保持左右手的组节奏。
+- 反拍允许调整分组边界与相位，减少边界附近过短的换手间隔。
+- 更密的段落会缩短换手周期，每组最多四个音符。
+- 长按占用的键在松手前会被避开，必要时使用其他手指。
+- 只改变轨道分配，保留音符时间、顺序和长按时长。原谱的同时音符不会被人为错开；同时/近同时的左右手按下是优化目标，无法在所有谱面中消除。
 
+默认映射为 `Fingering`。F5 面板可切换到循环分配或按方块角度分配。旧的 `Macro` 映射值仍按新指法处理。
 
-把 `General/DebugHud` 设为 `true` 后，叠加层左上角会出现一块半透明诊断面板，**不需要翻日志文件**：
+## 控制
 
-```
-AdoFalling  60 FPS (dt 0.016s)
-state=PlayerControl  shift=-1.780s  raw=1.234s
-notes=168  holds=16  onscreen=4
-first=0.000  judgeY=194  laneW=110
-```
+| 默认按键 | 功能 |
+| --- | --- |
+| F5 | 打开/关闭中文控制面板；关闭时保存 |
+| F8 | 显示/隐藏叠加层 |
+| F4 | 加载 `Chart/FilePath` 指定的 `.adofai`，开始/重启文件模式 |
+| F6 | 将当前时间对齐信息写入 UMM 日志 |
+| F7 / F9 | 调整音符时间偏移 |
+| End | 音符时间偏移归零 |
+| PageUp / PageDown | 增减开场提前量系数 |
+| - / = | 长按显示延后/提前 |
+| Backspace | 长按偏移归零 |
+| [ / ] | 缩短/加长长按长度系数 |
 
-| 字段 | 含义 |
-|---|---|
-| `FPS (dt)` | 实际帧率与帧间隔。若 `FPS≈20`、`dt≈0.05`，说明时钟没每帧推进 |
-| `time step` | **显示时钟每帧的推进量**。它应该接近 `dt`（例如 `0.0167`）。如果它明显小于 `dt` 或经常为 0，说明音符的推进被卡住 —— 这是判断"20FPS 手感"最直接的指标 |
-| `state` | 游戏相位（`Start` / `Countdown` / `PlayerControl` …） |
-| `shift` | 显示时钟相对游戏时钟的平移量，**负数=提前**。为 0 说明反应时间的修法没生效 |
-| `raw` | 游戏自己的歌曲时间（秒） |
-| `notes` / `holds` | 读到的音符数 / 其中长按数。`holds=0` 说明这一关没有长按，不是渲染问题 |
-| `onscreen` | 当前在屏幕上的音符数 |
-| `first` | 第一个音符的原始时间（有些谱是 0 或负数） |
+Shift 将时间微调步长从 0.01 秒增至 0.05 秒。面板内可用上下箭头选择、左右箭头调整、Enter 触发开关或按钮，也支持鼠标操作。UMM 的模组选项页同样提供控制面板入口。
 
+面板可调节轨道布局、下落速度、显隐、透明度、时间偏移、长按显示、换手保护窗口、自动播放及诊断信息。开关叠加层不会关闭控制面板入口。
 
+## 配置与读谱
 
-游戏自带的音效**不在 Unity Resources 目录里**（它们在 `resources.assets` 的 110 个 `snd*` 资源中），
-所以 `Resources.Load` 取不到。插件改为调用**游戏自己的播放接口**：
+配置位于 `Mods/AdoFalling/settings.json`，按 `General`、`Layout`、`Chart`、`Tuning`、`View`、`Style`、`Feedback` 分组。枚举使用名称，颜色使用 `r/g/b/a` 对象，通常取值为 0～1。单个无效配置项使用默认值并写日志；JSON 损坏时先保留 `settings.json.invalid.bak`，再生成默认配置。
 
-```csharp
-AudioManager.Play("snd" + hitSound, AudioSettings.dspTime + 0.02, conductor.hitSoundGroup, volume);
-```
+示例（首次生成的文件包含全部选项）：
 
-这正是原版 `scrConductor` 播放命中音的方式，因此贴图/音量/混音组都和游戏一致。
-
-| 配置 | 默认 | 说明 |
-|---|---|---|
-| `Feedback/LaneFlashStrength` | `0.7` | 轨道高亮强度（0 关闭，1 最亮） |
-| `Feedback/JudgeFlashStrength` | `0.85` | 判定线闪光强度（0 关闭，1 最亮） |
-| `Chart/SkipAutoTiles` | `true` | 不把原版**自动前进**的方块（`auto`、`midSpin`）生成为音符 |
-| `Chart/MergeSameBeat` | `true` | 把**同一进入时刻**的方块合并成一个音符 |
-| `Chart/SameBeatEpsilon` | `0.003` | 判定"同一拍"的时间容差（秒） |
-> **本机已标定的默认值**（都写进了代码默认值，新配置自动生效）：
->
-> | 参数 | 值 | 说明 |
-> |---|---|---|
-> | `Chart/LeadFraction` | `0` | 音符在 `entryTime` 时刻过判定线，与游戏判定同源 |
-> | `Chart/LeadOffsetSeconds` | `0.07` | 普通音符精调（实测 `avg judge err ≈ -11px`） |
-> | `Tuning/HoldOffsetSeconds` | `0` | 长按长条精调 |
-> | `Tuning/HoldScale` | `1` | 长条长度按谱面原值 |
-> | `Tuning/HoldShrinkWhileHeld` | `true` | 长条下落→按住期间收缩→松手消失 |
-> | `Chart/SkipHoldReleaseTiles` | `true` | 不为长按后的松手方块重复生成音符 |
->
-> 换机器 / 换显示器 / 改了 `NoteSpeed` 后，用 **F5** 面板重新标定即可。
-
-| `Chart/CountdownLead` | `true` | 平移时间轴，让第一个音符从屏幕顶端开始下落 |
-| `Chart/LeadFraction` | `0` | 提前量 = 下落时长 × 该系数。**0 = 音符正好在游戏判定的时刻过线（默认）**，1 = 提前一个整屏 |
-| `Chart/LeadOffsetSeconds` | `0.07` | 手工精调（秒）。正数=音符更早过线，负数=更晚。**本机标定值**，用 F5 面板调 |
-| `Chart/LeadInSeconds` | `0.35` | 在"一整屏下落"之外额外留的余量（秒），仅 `LeadFraction > 0` 时起作用 |
-| `Tuning/TuneKey` | `F5` | 对齐面板开关 |
-| `Tuning/TuneEarlierKey` / `TuneLaterKey` | `F7` / `F9` | 微调音符过线时刻 |
-| `Style/HoldBodyOpacity` | `0.45` | 长按尾迹的透明度 |
-
-> **对齐默认值**：`LeadFraction = 0` + `LeadOffsetSeconds = 0.07`。
-> `LeadFraction = 0` 时 `显示时间 = 歌曲时间`，音符正好在 `scrFloor.entryTime` 这个时刻通过判定线 ——
-> 而游戏也正是在这个时刻判定，二者同源。`0.07s` 是在**本机**用 F5 面板实测定标出来的精调量
-> （`n=45` 次命中，`avg judge err ≈ -16px ≈ 26ms`，人工精度范围内）。
-> 换机器、换显示器、或改了 `NoteSpeed` 后建议重新按 F5 标一次。
-
-> **关于"原版按一下、MOD 要按两下"**：原版 `scrPlayer.Simulated_PlayerControl_Update` 里有
-> `while (nextfloor.midSpin) nextfloor = nextfloor.nextfloor;` —— **midspin 方块是自动穿过的**，
-> 玩家不需要为它多按一次；而 `CalculateFloorEntryTimes` 里 midspin 的角度增量 `num3 = 0`，
-> 会让连续的方块**共享同一个 `entryTime`**。之前每个方块都生成一个音符，于是同一时刻出现了两个键，
-> 看起来就成了"双押"。现在默认按上面两项过滤/合并。
-> 每次读谱都会在日志里写出统计，例如
-> `chart read: 168 notes from 184 tiles (auto -2, midspin -13, same-beat -1)`，
-> 可以直接看到被过滤掉的数量。若某个谱真的需要多押，把 `MergeSameBeat` 或 `SkipAutoTiles` 关掉即可。
-
-> **打击音效已移除**：游戏自带音效不在 Unity `Resources` 里，而单独播放会和原版命中音叠成双声，
-> 所以现在完全交给游戏自己的音效，插件不再出声。
-
-游戏目录（下称 `<GAME>`）：
-`D:\steam\steamapps\common\A Dance of Fire and Ice`
-
----
-
-## 2. 已安装的文件
-
-```
-<GAME>\winhttp.dll              BepInEx Doorstop 代理（原样保留）
-<GAME>\version.dll              Doorstop 代理副本 ← 真正生效的那一个
-<GAME>\doorstop_config.ini      Doorstop 配置
-<GAME>\.doorstop_version
-<GAME>\BepInEx\core\...         BepInEx 5.4.23.5 运行时
-<GAME>\BepInEx\plugins\AdoFalling.dll   本 MOD
-<GAME>\BepInEx\config\com.dsh.adofalling.cfg   配置文件
-<GAME>\BepInEx\LogOutput.log    运行日志（排查问题先看这里）
+```json
+{
+  "General": {
+    "ToggleKey": "F8",
+    "LoadKey": "F4",
+    "AutoPlay": false
+  },
+  "Layout": {
+    "LaneMapping": "Fingering",
+    "NoteSpeed": 620.0,
+    "LaneWidth": 70.0
+  },
+  "Chart": {
+    "FingeringWindowMs": 180.0,
+    "FilePath": "D:\\charts\\example.adofai"
+  },
+  "Style": {
+    "NoteColor": "255,0,0",
+    "LaneColor": { "r": 0.05, "g": 0.06, "b": 0.09, "a": 1.0 }
+  }
+}
 ```
 
-> **为什么需要 `version.dll`**：Doorstop 4.5 只提供 `winhttp.dll`，而本作主程序只导入
-> `UnityPlayer.dll` 与 `KERNEL32.dll`，`winhttp` 直到真正发起 HTTP 请求时才会被加载，
-> 导致 Doorstop 初始化太晚/不发生（表现为 `BepInEx\` 目录完全不生成）。
-> 把同一份代理复制为 `version.dll` 后，系统在加载 UnityPlayer 时即解析它，Doorstop 正常接管。
-> 两个文件可以共存，`winhttp.dll` 保留即可。
+`FingeringWindowMs` 是避免过短换手的保护参数，并受局部换手周期限制；音符细分由局部节拍推导。普通八分不会因 BPM 升高而自动变成轮指。
 
----
+默认直接读取游戏已建立的谱面时间轴，显示时钟每帧读取游戏歌曲时间，命中特效使用游戏的 `scrPlayer.onHit`。文件模式复用相同的轨道分配器，但文件解析仅覆盖角度、速度、转向、暂停等已有支持，不完整覆盖长按和所有特殊事件；有复杂事件的谱面优先使用默认读取方式。F4 把文件首音锚定到按键时刻，应在首音时启动；再次按下会重启时间轴。
 
-## 3. 使用
+在游戏关闭时编辑 JSON，下一次启动加载修改。面板关闭、UMM 保存配置、禁用与卸载都会保存当前设置。更新安装包只替换清单与 DLL，保留已有 `settings.json`。
 
-1. 正常启动游戏（Steam 或直接运行 `<GAME>\A Dance of Fire and Ice.exe` 均可）。
-2. 进入任意关卡，叠加层自动出现。
-3. 热键：
-   - `F8`：显示 / 隐藏叠加层
-4. 配置文件：`<GAME>\BepInEx\config\com.dsh.adofalling.cfg`，改动后重启游戏生效
-   （也可装 BepInEx ConfigurationManager 在游戏内改）。
+## 构建与验证
 
-### 主要配置项
-
-| 段 | 键 | 默认 | 说明 |
-|---|---|---|---|
-| General | `ToggleKey` | `F8` | 显隐热键 |
-| General | `LoadKey` | `F4` | 文件模式启动键；与八个读谱键冲突的旧配置自动迁移为 F4 |
-| General | `PollInterval` | `0.05` | 游戏状态轮询间隔（秒） |
-| General | `DebugHud` | `false` | 每 2 秒把状态/谱面信息写进日志，排查用 |
-| General | `DemoMode` | `false` | 在任意界面画一条**合成**下落谱面，用来预览/调样式，不必进关卡 |
-| General | `DemoBpm` | `150` | DemoMode 的节拍 |
-| General | `ForceDemo` | `false` | 即使正在打歌也用合成谱面（纯调样式用） |
-| Layout | `JudgeLineY` | `0.18` | 判定线高度（屏高比例，0 = 底部） |
-| Layout | `NoteSpeed` | `620` | 下落速度（1080p 基准像素/秒） |
-| Layout | `NoteHeight` | `26` | 按键高度（1080p 基准像素） |
-| Layout | `LaneWidth` / `LaneGap` | `70` / `8` | 八轨宽度 / 间距（像素） |
-| Layout | `RightToLeft` | `false` | 轨道从右往左排 |
-| Layout | `LaneMapping` | `Fingering` | `Fingering`（八轨手组）/ `Macro`（兼容别名）/ `Position`（进入方向）/ `Cycle`（方块序号 %8）/ `Sequential`（顺序） |
-| Chart | `FilePath` | 空 | .adofai 谱面文件路径（文件模式）；本机默认填了 `tmp\OfficialCharts\CE-TX Dramatic Entrance!.adofai` |
-| Chart | `FileOffsetSeconds` | `0` | 文件模式的时间微调（秒，正数 = 整体更晚） |
-| Chart | `FingeringWindowMs` | `180` | 换手保护窗口（毫秒），上限为局部手组周期的四分之一 |
-| Layout | `NoteRotation` | `false` | 按键朝判定线倾斜（VSRG 观感） |
-| Style | `LaneOpacity` | `0.18` | 轨道底透明度（0 = 全透明） |
-| Style | `LaneEdgeAlpha` | `0.7` | 轨道边框透明度（轨道"看得见"主要靠它） |
-| Style | `JudgeLineOpacity` | `1` | 判定线透明度 |
-| Style | `NoteOpacity` | `1` | 按键透明度 |
-| Style | `LaneColor` / `LaneEdgeColor` / `JudgeLineColor` / `NoteAltColor` | — | 颜色（`RRGGBBAA`） |
-| Style | `NoteColor` | `255,0,0` | 音符颜色，支持 RGB（`R,G,B`，0-255）或十六进制（`FF0000` / `#FF0000`）；可选第 4 个值设置透明度（如 `255,0,0,128` 或 `FF000080`）。推荐原 mod 的红 `FF7333`（`255,115,51`）和蓝 `66B2FF`（`102,178,255`） |
-
-> 关于「主要判定线与发射的按键和轨道不透明，其他透明」：
-> 判定线、轨道边框、按键默认都是不透明（alpha = 1）；轨道底默认 `0.18` 半透明，
-> 这样既能看清轨道又不会挡住原版谱面。想要轨道底也完全不透明就把 `LaneOpacity` 设为 `1`。
-
----
-
-## 4. 读谱原理（为什么时间轴是准的）
-
-全部取自游戏自身的运行时数据，不解析 `.adofai` JSON：
-
-| 数据 | 来源（已反编译核对） |
-|---|---|
-| 音符时间 | `scrFloor.entryTime` —— 星球进入该方块的**绝对歌曲秒数**，已包含 BPM、`SetSpeed`、`Pause`、`Hold` 等全部事件 |
-| 方块序号 | `scrFloor.seqID` |
-| 进入方向 | `scrFloor.entryangle`（弧度）→ `LaneMapping=Position` 时量化到 8 轨 |
-| 谱面列表 | `scrLevelMaker.instance.listFloors`（`List<scrFloor>`，`listFloors[i].seqID == i`） |
-| 当前歌曲时间 | `scrConductor.instance.songposition_minusi`（双精度秒） |
-| 是否在打歌 | `scrController.instance.currentState == States.PlayerControl` |
-| 暂停 | `scrController.instance.paused` |
-
-所有游戏接口都通过**缓存反射**访问，因此即使日后类型名变化，插件最多是「读不到谱面」而不会崩溃，
-并且会在日志里打出实际原因。
-
-> 注意：`currentFloorID` 不是方块序号，`currentSeqID` / `currFloor.seqID` 才是；
-> `listFloors[0]` 是不会被演奏的填充方块。
-
----
-
-## 5. 从源码构建
-
-```
-powershell -ExecutionPolicy Bypass -File build.ps1            # 只编译
-powershell -ExecutionPolicy Bypass -File build.ps1 -Install   # 编译 + 部署到游戏
-powershell -ExecutionPolicy Bypass -File build.ps1 -InstallLoader -Install   # 连 BepInEx 一起装
-```
-
-- 编译器：`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`（C# 5）
-- 引用：游戏目录 `*_Data\Managed` 下的 `netstandard.dll` / `UnityEngine*.dll` / `Assembly-CSharp.dll`
-  ＋ `BepInEx\core` 下的 `BepInEx.dll`、`0Harmony.dll`
-- 产物：`build\AdoFalling.dll`，编译日志 `build\csc.log`
-
-可用 `-BepInExDir "路径\BepInEx"` 指定编译依赖；未指定时依次查找游戏目录、仓库
-`bepinex\BepInEx` 和 `build\dependencies\BepInEx`。仅编译不修改游戏安装目录。
-
-排键与读谱回归检查（不需要启动游戏）：
+Windows 上使用系统 .NET Framework C# 编译器，不需要安装 .NET SDK：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tests\run.ps1
-# 若默认 Newtonsoft.Json 路径不存在，提供 .NET Framework 兼容版本：
-powershell -NoProfile -ExecutionPolicy Bypass -File tests\run.ps1 -JsonDll "路径\Newtonsoft.Json.dll"
+powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
+
+# 指定游戏位置；UMM DLL 默认从游戏 Managed/UnityModManager 或 umm 目录寻找
+powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1 -GameDir "D:\games\A Dance of Fire and Ice"
+
+# 可显式传入 UMM DLL 所在目录
+powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1 -UmmDir "D:\tools\UnityModManager"
+
+# 编译后复制到游戏 Mods/AdoFalling
+powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1 -Install
+
+# 运行算法、读谱和 UMM 生命周期检查
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/run.ps1
 ```
 
-检查覆盖八分/十六分转换、二十四分/三十二分、连续与插入反拍、容量扩展、BPM 变速、
-长按键占用、文件时间轴、旧配置兼容，以及调参保留已命中状态。编译产物在 `build\tests`。
+产物为 `build/AdoFalling.dll`、`build/AdoFalling/` 和 `build/AdoFalling-0.7.0-UMM.zip`。插件引用游戏的 Unity / Newtonsoft.Json 和 UMM 程序集；无需额外补丁库。
 
-> 本机没有 .NET SDK，所以用 csc 直接编译；`build.ps1` 内部路径全部由脚本自身位置推导，
-> 不会把中文路径经命令行传递（PS 5.1 会按 ANSI 误读）。
-
-### 源码结构（`src\AdoFalling\`）
-
-| 文件 | 职责 |
-|---|---|
-| `FallingPlugin.cs` | `BaseUnityPlugin` 入口：配置、每帧推进、`OnGUI` 绘制、热键 |
-| `ControlPanel.cs` | **中文控制面板**（F5）：滑块 + 输入框 + 开关 + 中文界面 |
-| `FallingConfig.cs` | 全部配置项 |
-| `GameState.cs` | 反射读取游戏状态（歌曲时间/BPM/状态） |
-| `GameClock.cs` | 显示时钟（每帧直读歌曲时间 + 平移）与判定事件钩子 |
-| `ChartReader.cs` | 读谱：过滤 auto/midspin/松手方块、同拍合并、长按时长 |
-| `FingeringPlanner.cs` | 八轨手组排键：左右手组交替、外向内轮指、反拍相位与长按占用处理 |
-| `MacroPlan.cs` | 文件按键时间轴及逐音符局部 BPM，供统一排键器使用 |
-| `FallingEngine.cs` | 每帧推进音符、判定特效、时间回溯（存档点）重建 |
-| `FallingView.cs` | 屏幕几何：轨道位置、判定线高度 |
-| `OverlayRenderer.cs` | 用 IMGUI 绘制判定线/轨道/下落按键/长条/判定特效 |
-| `HitSoundPlayer.cs` | （已停用，仅保留文件） |
-| `NoteInstance.cs` | 单个音符的数据 |
-
-### 为什么用 IMGUI 而不是 UGUI Canvas
-
-本作（Unity 6000.3.10f1）的渲染管线下，**插件自建的 UGUI Canvas 不会被合成到最终画面**：
-逐帧日志证明画布状态正确（`mode=ScreenSpaceCamera`、`active=True`、四边形数量正确、
-坐标与颜色正确），但截图上完全看不到；而把 `Canvas` 换成 ScreenSpaceOverlay、
-或改绑到游戏相机、或自建一台 depth 最高的相机，结果都一样。
-
-`OnGUI`（IMGUI）绘制的是**已完成帧之上**的内容，实测每次都稳定出现，因此最终采用它：
-不需要 Canvas、相机、Sprite 或自定义 Shader，只用一个 1×1 白贴图 + `GUI.DrawTexture` 着色，
-功能上与 UGUI 版本完全等价（`NoteRotation` 用 `GUIUtility.RotateAroundPivot` 实现倾斜）。
-
----
-
-## 6. 已知限制 / 下一步
-
-- **只做视觉**：不改判定、不加分、不接管输入。判定动画是对**游戏自身判定结果**的回显
-  （`scrPlayer.onHit`），不是插件另算的一套。
-- 判定文字会按 `scrFloor.grade`（`HitMargin`）显示 `PERFECT` / `EARLY` / `LATE` / `MULTI` / `AUTO`；
-  读不到判定等级时显示 `HIT`。
-- 长按（`holdLength`）、双押（`tapsNeeded`）、多星球（`MultiPlanet`）目前都按单键显示，还没有专属外观。
-- 轨道是矩形条带；后续可加梯形/斜切（`NoteRotation` 已给按键做了倾斜）。
-- 打歌输入的自动化被 Rewired 拦下，所以判定动画需要在真实关卡里人工确认一次。
-
----
-
-## 7. 卸载
-
-1. 删除 `<GAME>\BepInEx\plugins\AdoFalling.dll`（或整个 `<GAME>\BepInEx` 目录）
-2. 删除 `<GAME>\version.dll`；如需完全移除加载器，再删 `winhttp.dll`、`doorstop_config.ini`、`.doorstop_version`
-3. 若游戏仍能启动但 BepInEx 未生效，先确认 `version.dll` 是否还在
-
----
-
-## 8. 排查
-
-| 现象 | 处理 |
-|---|---|
-| 完全没有叠加层 | 看 `<GAME>\BepInEx\LogOutput.log`；没有该文件说明 Doorstop 未生效 → 确认 `version.dll` 存在且未被杀软删除 |
-| 日志出现 `Assembly-CSharp is not loaded` | 插件被过早加载，反馈日志内容 |
-| 日志出现 `scrLevelMaker.listFloors unreachable` | 读到 `Diagnostic` 字段，会给出具体原因 |
-| 进关卡有轨道但没按键 | 把 `DebugHud` 设为 `true`，看 `notes=` 数量；若为 0，说明 `entryTime` 未读到 |
-| 按键时间整体偏移 | 报出 `t=` 与 `seq=`，可按下落距离整体平移（`JudgeLineY`/`NoteSpeed` 调手感） |
+`tests/run.ps1` 支持 `-JsonDll` 指定兼容 .NET Framework 的 Newtonsoft.Json DLL，默认使用游戏 `umm` 目录中的版本。当前 39 项检查覆盖指法、反拍、局部变速、长按避让、八轨布局、JSON 往返与异常恢复、UMM 加载/启停/卸载、回调清理和自动播放状态恢复。生命周期检查使用托管宿主与反射夹具，不启动 Unity；本次 UMM 改造尚需实机确认渲染、输入及与其他模组共存。

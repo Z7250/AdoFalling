@@ -1,65 +1,64 @@
-using BepInEx.Configuration;
 using UnityEngine;
 
 namespace AdoFalling
 {
-    /// <summary>All tunables exposed through the BepInEx config file.</summary>
+    /// <summary>All tunables exposed through the UMM settings file.</summary>
     internal sealed class FallingConfig
     {
-        public readonly ConfigEntry<KeyCode> ToggleKey;
-        public readonly ConfigEntry<float> PollInterval;
-        public readonly ConfigEntry<KeyCode> LoadKey;
-        public readonly ConfigEntry<bool> DebugHud;
-        public readonly ConfigEntry<bool> DemoMode;
-        public readonly ConfigEntry<double> DemoBpm;
-        public readonly ConfigEntry<bool> ForceDemo;
-        public readonly ConfigEntry<bool> DemoHits;
-        public readonly ConfigEntry<bool> AutoPlay;
+        public readonly Setting<KeyCode> ToggleKey;
+        public readonly Setting<float> PollInterval;
+        public readonly Setting<KeyCode> LoadKey;
+        public readonly Setting<bool> DebugHud;
+        public readonly Setting<bool> DemoMode;
+        public readonly Setting<double> DemoBpm;
+        public readonly Setting<bool> ForceDemo;
+        public readonly Setting<bool> DemoHits;
+        public readonly Setting<bool> AutoPlay;
 
-        public readonly ConfigEntry<float> JudgeLineY;
-        public readonly ConfigEntry<float> NoteSpeedPxPerSec;
-        public readonly ConfigEntry<float> NoteHeight;
-        public readonly ConfigEntry<float> LaneWidth;
-        public readonly ConfigEntry<float> LaneGap;
-        public readonly ConfigEntry<bool> MirrorDirection;
-        public readonly ConfigEntry<LaneMapping> LaneMapping;
-        public readonly ConfigEntry<double> FingeringWindowMs;
-        public readonly ConfigEntry<string> FilePath;
-        public readonly ConfigEntry<double> FileOffsetSeconds;
-        public readonly ConfigEntry<bool> NoteRotation;
-        public readonly ConfigEntry<bool> SkipAutoTiles;
-        public readonly ConfigEntry<bool> MergeSameBeat;
-        public readonly ConfigEntry<double> SameBeatEpsilon;
-        public readonly ConfigEntry<bool> CountdownLead;
-        public readonly ConfigEntry<double> LeadInSeconds;
-        public readonly ConfigEntry<double> LeadFraction;
-        public readonly ConfigEntry<double> LeadOffsetManual;
-        public readonly ConfigEntry<double> HoldOffsetSeconds;
-        public readonly ConfigEntry<double> HoldScale;
-        public readonly ConfigEntry<bool> HoldShrinkWhileHeld;
-        public readonly ConfigEntry<bool> SkipHoldReleaseTiles;
-        public readonly ConfigEntry<KeyCode> HoldLaterKey;
-        public readonly ConfigEntry<KeyCode> HoldEarlierKey;
-        public readonly ConfigEntry<KeyCode> TuneKey;
-        public readonly ConfigEntry<KeyCode> TuneEarlierKey;
-        public readonly ConfigEntry<KeyCode> TuneLaterKey;
-        public readonly ConfigEntry<KeyCode> ControlPanelKey;
-        public readonly ConfigEntry<bool> ShowJudgeLine;
-        public readonly ConfigEntry<bool> ShowNotes;
-        public readonly ConfigEntry<bool> ShowHitEffects;
-        public readonly ConfigEntry<bool> ShowJudgeText;
-        public readonly ConfigEntry<bool> ShowLanes;
+        public readonly Setting<float> JudgeLineY;
+        public readonly Setting<float> NoteSpeedPxPerSec;
+        public readonly Setting<float> NoteHeight;
+        public readonly Setting<float> LaneWidth;
+        public readonly Setting<float> LaneGap;
+        public readonly Setting<bool> MirrorDirection;
+        public readonly Setting<LaneMapping> LaneMapping;
+        public readonly Setting<double> FingeringWindowMs;
+        public readonly Setting<string> FilePath;
+        public readonly Setting<double> FileOffsetSeconds;
+        public readonly Setting<bool> NoteRotation;
+        public readonly Setting<bool> SkipAutoTiles;
+        public readonly Setting<bool> MergeSameBeat;
+        public readonly Setting<double> SameBeatEpsilon;
+        public readonly Setting<bool> CountdownLead;
+        public readonly Setting<double> LeadInSeconds;
+        public readonly Setting<double> LeadFraction;
+        public readonly Setting<double> LeadOffsetManual;
+        public readonly Setting<double> HoldOffsetSeconds;
+        public readonly Setting<double> HoldScale;
+        public readonly Setting<bool> HoldShrinkWhileHeld;
+        public readonly Setting<bool> SkipHoldReleaseTiles;
+        public readonly Setting<KeyCode> HoldLaterKey;
+        public readonly Setting<KeyCode> HoldEarlierKey;
+        public readonly Setting<KeyCode> TuneKey;
+        public readonly Setting<KeyCode> TuneEarlierKey;
+        public readonly Setting<KeyCode> TuneLaterKey;
+        public readonly Setting<KeyCode> ControlPanelKey;
+        public readonly Setting<bool> ShowJudgeLine;
+        public readonly Setting<bool> ShowNotes;
+        public readonly Setting<bool> ShowHitEffects;
+        public readonly Setting<bool> ShowJudgeText;
+        public readonly Setting<bool> ShowLanes;
 
-        public readonly ConfigEntry<float> LaneOpacity;
-        public readonly ConfigEntry<float> LaneAlpha;
-        public readonly ConfigEntry<float> JudgeOpacity;
-        public readonly ConfigEntry<float> NoteOpacity;
-        public readonly ConfigEntry<float> HoldBodyOpacity;
-        public readonly ConfigEntry<Color> LaneColor;
-        public readonly ConfigEntry<Color> LaneEdgeColor;
-        public readonly ConfigEntry<Color> JudgeColor;
-        public readonly ConfigEntry<string> NoteColor;
-        public readonly ConfigEntry<Color> NoteAltColor;
+        public readonly Setting<float> LaneOpacity;
+        public readonly Setting<float> LaneAlpha;
+        public readonly Setting<float> JudgeOpacity;
+        public readonly Setting<float> NoteOpacity;
+        public readonly Setting<float> HoldBodyOpacity;
+        public readonly Setting<Color> LaneColor;
+        public readonly Setting<Color> LaneEdgeColor;
+        public readonly Setting<Color> JudgeColor;
+        public readonly Setting<string> NoteColor;
+        public readonly Setting<Color> NoteAltColor;
         private Color _noteColorCache = new Color(1f, 0f, 0f, 1f);
         private string _noteColorCacheText;
 
@@ -88,16 +87,13 @@ namespace AdoFalling
                 return _noteColorCache;
             }
         }
-public readonly ConfigEntry<float> LaneFlashStrength;
-        public readonly ConfigEntry<float> JudgeFlashStrength;
+        public readonly Setting<float> LaneFlashStrength;
+        public readonly Setting<float> JudgeFlashStrength;
 
-        public FallingConfig(ConfigFile f)
+        public FallingConfig(SettingsFile f)
         {
-            ToggleKey = f.Bind("General", "ToggleKey", KeyCode.F8,
-                "Show/hide the falling overlay");
-            LoadKey = f.Bind("General", "LoadKey", KeyCode.F4,
-                "Load/refresh the .adofai file in Chart/FilePath. File timing uses the same " +
-                "eight-key alternating hand groups as the live chart");
+            ToggleKey = f.Bind("General", "ToggleKey", KeyCode.F8);
+            LoadKey = f.Bind("General", "LoadKey", KeyCode.F4);
             // F used to activate file mode. It is now the left index lane: accepting
             // it here would restart the timeline on every normal index tap.
             switch (LoadKey.Value)
@@ -108,141 +104,64 @@ public readonly ConfigEntry<float> LaneFlashStrength;
                     FallingPlugin.Log.LogInfo("LoadKey overlapped ASDFJKL; and was migrated to F4");
                     break;
             }
-            PollInterval = f.Bind("General", "PollInterval", 0.05f,
-                "Seconds between game-state polls (chart / time)");
-            DebugHud = f.Bind("General", "DebugHud", false,
-                "Log chart / timing diagnostics to the BepInEx console");
-            DemoMode = f.Bind("General", "DemoMode", false,
-                "Draw a synthetic chart on any screen - use it to preview or tune the " +
-                "layout without loading a level");
-            DemoBpm = f.Bind("General", "DemoBpm", 150.0,
-                "Tempo used by DemoMode");
-            ForceDemo = f.Bind("General", "ForceDemo", false,
-                "Use the DemoMode chart even while a level is running (layout preview only)");
-            DemoHits = f.Bind("General", "DemoHits", false,
-                "In DemoMode, synthesise a hit whenever a note reaches the line, so the " +
-                "judgement animation and hit sound can be previewed without playing");
-            AutoPlay = f.Bind("General", "AutoPlay", false,
-                "Let the game play the level by itself (the game's own RDC.auto switch). " +
-                "Useful for watching the overlay without playing");
+            PollInterval = f.Bind("General", "PollInterval", 0.05f);
+            DebugHud = f.Bind("General", "DebugHud", false);
+            DemoMode = f.Bind("General", "DemoMode", false);
+            DemoBpm = f.Bind("General", "DemoBpm", 150.0);
+            ForceDemo = f.Bind("General", "ForceDemo", false);
+            DemoHits = f.Bind("General", "DemoHits", false);
+            AutoPlay = f.Bind("General", "AutoPlay", false);
 
-            JudgeLineY = f.Bind("Layout", "JudgeLineY", 0.18f,
-                "Judgement line height as a fraction of screen height (0 = bottom)");
-            NoteSpeedPxPerSec = f.Bind("Layout", "NoteSpeed", 620f,
-                "Fall speed in pixels per second at 1080p reference height");
-            NoteHeight = f.Bind("Layout", "NoteHeight", 26f,
-                "Note height in pixels at 1080p reference height");
-            LaneWidth = f.Bind("Layout", "LaneWidth", 70f, "Lane width in pixels (eight lanes: ASDFJKL;)");
-            LaneGap = f.Bind("Layout", "LaneGap", 8f, "Gap between lanes in pixels");
-            MirrorDirection = f.Bind("Layout", "RightToLeft", false,
-                "Lay lanes out right-to-left instead of left-to-right");
-            LaneMapping = f.Bind("Layout", "LaneMapping", AdoFalling.LaneMapping.Fingering,
-                "Fingering = alternating eighth-beat hand groups on ASDF/JKL;, " +
-                "outside-to-index rolls within each group. Macro is a legacy alias for the " +
-                "same allocator. Position = entry direction; Cycle / Sequential use eight lanes");
-            FingeringWindowMs = f.Bind("Chart", "FingeringWindowMs", 180.0,
-                "Cross-hand protection window in milliseconds, capped at one quarter of the " +
-                "local hand-group duration. Close notes prefer one outside-to-index roll. " +
-                "Subdivision comes from local BPM, not this threshold");
-            FilePath = f.Bind("Chart", "FilePath", "",
-                "Path to the .adofai chart file supplying press times and local BPM " +
-                "(Twirl/Pause/SetSpeed). Lanes use the common eight-key hand-group allocator. " +
-                "Load it with the load key (F4 by default) while in a level");
-            FileOffsetSeconds = f.Bind("Chart", "FileOffsetSeconds", 0.0,
-                "Fine trim for the file chart timeline, in seconds. Positive makes every note " +
-                "later. Only used by the file mode (load key)");
-            NoteRotation = f.Bind("Layout", "NoteRotation", false,
-                "Tilt notes towards the judgement line (VSRG look)");
-            SkipAutoTiles = f.Bind("Chart", "SkipAutoTiles", true,
-                "Do not emit notes for tiles the game advances through by itself " +
-                "(auto tiles and midspins). Turning this off makes those tiles appear as " +
-                "extra presses that the original chart never asks for");
-            MergeSameBeat = f.Bind("Chart", "MergeSameBeat", true,
-                "Fold tiles that share one entry time into a single note. The planet lands on " +
-                "them from one press, so separate notes would show as an unwanted double");
-            SameBeatEpsilon = f.Bind("Chart", "SameBeatEpsilon", 0.003,
-                "Maximum time difference (seconds) treated as the same beat");
-            CountdownLead = f.Bind("Chart", "CountdownLead", true,
-                "Shift the falling timeline back so the first note reaches the judgement line " +
-                "after a full fall, instead of the player having to react the instant the " +
-                "music starts. The shift happens before the level begins, so nothing is skipped");
-            LeadInSeconds = f.Bind("Chart", "LeadInSeconds", 0.35,
-                "Extra margin on top of a full fall before the first note is due, in seconds");
-            LeadFraction = f.Bind("Chart", "LeadFraction", 0.0,
-                "How much of the fall time is used as lead: 0 = notes cross the judgement line " +
-                "exactly on the song clock (perfect alignment with the game's judgement), " +
-                "1 = a full fall earlier. Raise it only if you want extra visual warning time");
-            LeadOffsetManual = f.Bind("Chart", "LeadOffsetSeconds", 0.07,
-                "Manual fine trim added on top of LeadFraction, in seconds. Positive makes notes " +
-                "cross the judgement line EARLIER, negative makes them cross LATER. Tune it in " +
-                "game with the F5 panel; the value is written back here when you save. " +
-                "0.07 is the value calibrated on this installation (avg judge error -16px)");
-            TuneKey = f.Bind("Tuning", "TuneKey", KeyCode.F6,
-                "Log the current alignment values to the BepInEx console (the F5 panel is the " +
-                "main UI now)");
-            ControlPanelKey = f.Bind("Tuning", "ControlPanelKey", KeyCode.F5,
-                "Open/close the Chinese control panel");
-            ShowJudgeLine = f.Bind("View", "ShowJudgeLine", true,
-                "Draw the judgement line");
-            ShowNotes = f.Bind("View", "ShowNotes", true,
-                "Draw the falling notes and hold bars");
-            ShowLanes = f.Bind("View", "ShowLanes", true,
-                "Draw the lane columns (bodies and outlines)");
-            ShowHitEffects = f.Bind("View", "ShowHitEffects", true,
-                "Draw the hit feedback: lane wash, judgement line flash and burst bars");
-            ShowJudgeText = f.Bind("View", "ShowJudgeText", true,
-                "Draw the judgement labels (PERFECT / EARLY / LATE ...)");
-            TuneEarlierKey = f.Bind("Tuning", "TuneEarlierKey", KeyCode.F7,
-                "Make notes cross the judgement line earlier");
-            TuneLaterKey = f.Bind("Tuning", "TuneLaterKey", KeyCode.F9,
-                "Make notes cross the judgement line later");
+            JudgeLineY = f.Bind("Layout", "JudgeLineY", 0.18f);
+            NoteSpeedPxPerSec = f.Bind("Layout", "NoteSpeed", 620f);
+            NoteHeight = f.Bind("Layout", "NoteHeight", 26f);
+            LaneWidth = f.Bind("Layout", "LaneWidth", 70f);
+            LaneGap = f.Bind("Layout", "LaneGap", 8f);
+            MirrorDirection = f.Bind("Layout", "RightToLeft", false);
+            LaneMapping = f.Bind("Layout", "LaneMapping", AdoFalling.LaneMapping.Fingering);
+            FingeringWindowMs = f.Bind("Chart", "FingeringWindowMs", 180.0);
+            FilePath = f.Bind("Chart", "FilePath", "");
+            FileOffsetSeconds = f.Bind("Chart", "FileOffsetSeconds", 0.0);
+            NoteRotation = f.Bind("Layout", "NoteRotation", false);
+            SkipAutoTiles = f.Bind("Chart", "SkipAutoTiles", true);
+            MergeSameBeat = f.Bind("Chart", "MergeSameBeat", true);
+            SameBeatEpsilon = f.Bind("Chart", "SameBeatEpsilon", 0.003);
+            CountdownLead = f.Bind("Chart", "CountdownLead", true);
+            LeadInSeconds = f.Bind("Chart", "LeadInSeconds", 0.35);
+            LeadFraction = f.Bind("Chart", "LeadFraction", 0.0);
+            LeadOffsetManual = f.Bind("Chart", "LeadOffsetSeconds", 0.07);
+            TuneKey = f.Bind("Tuning", "TuneKey", KeyCode.F6);
+            ControlPanelKey = f.Bind("Tuning", "ControlPanelKey", KeyCode.F5);
+            ShowJudgeLine = f.Bind("View", "ShowJudgeLine", true);
+            ShowNotes = f.Bind("View", "ShowNotes", true);
+            ShowLanes = f.Bind("View", "ShowLanes", true);
+            ShowHitEffects = f.Bind("View", "ShowHitEffects", true);
+            ShowJudgeText = f.Bind("View", "ShowJudgeText", true);
+            TuneEarlierKey = f.Bind("Tuning", "TuneEarlierKey", KeyCode.F7);
+            TuneLaterKey = f.Bind("Tuning", "TuneLaterKey", KeyCode.F9);
 
             // Hold notes get their own trim so they can be lined up independently of the
             // regular notes.
-            HoldOffsetSeconds = f.Bind("Tuning", "HoldOffsetSeconds", 0.0,
-                "Fine trim for HOLD notes only, in seconds. Positive shifts the hold bar EARLIER. " +
-                "Bound to '-' (later) and '=' (earlier) in game. 0 = calibrated on this install");
-            HoldScale = f.Bind("Tuning", "HoldScale", 1.0,
-                "Hold bar length multiplier. 1 = the length that comes from the chart");
-            HoldShrinkWhileHeld = f.Bind("Tuning", "HoldShrinkWhileHeld", true,
-                "true (default): the hold bar falls head-first like a normal note, then while you " +
-                "hold it its judged end stays on the judgement line and the bar shrinks until the " +
-                "release. false: the bar is removed the moment it is pressed");
-            SkipHoldReleaseTiles = f.Bind("Chart", "SkipHoldReleaseTiles", true,
-                "Do not emit a note for the tile that follows a hold: the game judges the hold's " +
-                "release on the hold tile itself, so that tile would show the same judgement twice");
-            HoldLaterKey = f.Bind("Tuning", "HoldLaterKey", KeyCode.Minus,
-                "Shift hold bars later");
-            HoldEarlierKey = f.Bind("Tuning", "HoldEarlierKey", KeyCode.Equals,
-                "Shift hold bars earlier");
+            HoldOffsetSeconds = f.Bind("Tuning", "HoldOffsetSeconds", 0.0);
+            HoldScale = f.Bind("Tuning", "HoldScale", 1.0);
+            HoldShrinkWhileHeld = f.Bind("Tuning", "HoldShrinkWhileHeld", true);
+            SkipHoldReleaseTiles = f.Bind("Chart", "SkipHoldReleaseTiles", true);
+            HoldLaterKey = f.Bind("Tuning", "HoldLaterKey", KeyCode.Minus);
+            HoldEarlierKey = f.Bind("Tuning", "HoldEarlierKey", KeyCode.Equals);
 
-            LaneOpacity = f.Bind("Style", "LaneOpacity", 0.18f,
-                "Lane body alpha (0 = invisible, 1 = opaque)");
-            LaneAlpha = f.Bind("Style", "LaneEdgeAlpha", 0.7f,
-                "Lane outline alpha - this is what makes the tracks read clearly");
-            JudgeOpacity = f.Bind("Style", "JudgeLineOpacity", 1f,
-                "Judgement line alpha");
-            NoteOpacity = f.Bind("Style", "NoteOpacity", 1f, "Falling note alpha");
-            HoldBodyOpacity = f.Bind("Style", "HoldBodyOpacity", 0.45f,
-                "Alpha of the hold tail, relative to NoteOpacity");
-            LaneColor = f.Bind("Style", "LaneColor", new Color(0.05f, 0.06f, 0.09f, 1f),
-                "Lane body colour (alpha comes from LaneOpacity)");
-            LaneEdgeColor = f.Bind("Style", "LaneEdgeColor", new Color(0.35f, 0.55f, 0.95f, 1f),
-                "Lane outline colour (alpha comes from LaneEdgeAlpha)");
-            JudgeColor = f.Bind("Style", "JudgeLineColor", new Color(1f, 1f, 1f, 1f),
-                "Judgement line colour");
-            NoteColor = f.Bind("Style", "NoteColor", "255,0,0",
-                "Note colour: RGB as R,G,B (0-255, e.g. 255,0,0) or hex as FF0000 / #FF0000. " +
-                "An optional 4th value sets alpha (e.g. 255,0,0,128 or FF000080). Suggested " +
-                "values - the original mod's red and blue: FF7333 (255,115,51) and " +
-                "66B2FF (102,178,255)");
-            NoteAltColor = f.Bind("Style", "NoteAltColor", new Color(0.4f, 0.7f, 1f, 1f),
-                "Secondary note colour (alternates per tile)");
+            LaneOpacity = f.Bind("Style", "LaneOpacity", 0.18f);
+            LaneAlpha = f.Bind("Style", "LaneEdgeAlpha", 0.7f);
+            JudgeOpacity = f.Bind("Style", "JudgeLineOpacity", 1f);
+            NoteOpacity = f.Bind("Style", "NoteOpacity", 1f);
+            HoldBodyOpacity = f.Bind("Style", "HoldBodyOpacity", 0.45f);
+            LaneColor = f.Bind("Style", "LaneColor", new Color(0.05f, 0.06f, 0.09f, 1f));
+            LaneEdgeColor = f.Bind("Style", "LaneEdgeColor", new Color(0.35f, 0.55f, 0.95f, 1f));
+            JudgeColor = f.Bind("Style", "JudgeLineColor", new Color(1f, 1f, 1f, 1f));
+            NoteColor = f.Bind("Style", "NoteColor", "255,0,0");
+            NoteAltColor = f.Bind("Style", "NoteAltColor", new Color(0.4f, 0.7f, 1f, 1f));
 
-            LaneFlashStrength = f.Bind("Feedback", "LaneFlashStrength", 0.7f,
-                "How bright the whole lane flashes on a hit (0 = off, 1 = full wash)");
-            JudgeFlashStrength = f.Bind("Feedback", "JudgeFlashStrength", 0.85f,
-                "How bright the judgement line flashes on a hit (0 = off, 1 = full white)");
+            LaneFlashStrength = f.Bind("Feedback", "LaneFlashStrength", 0.7f);
+            JudgeFlashStrength = f.Bind("Feedback", "JudgeFlashStrength", 0.85f);
         }
 
         /// <summary>Parses "R,G,B[,A]" (0-255) or "#RRGGBB[AA]" ("#" optional).</summary>

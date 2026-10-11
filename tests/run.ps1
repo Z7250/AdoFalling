@@ -31,3 +31,21 @@ Copy-Item -LiteralPath $JsonDll -Destination (Join-Path $outDir 'Newtonsoft.Json
 if ($LASTEXITCODE -ne 0) { throw 'Chart test compilation failed' }
 & $chartExe (Join-Path $outDir 'fixtures')
 if ($LASTEXITCODE -ne 0) { throw 'Chart integration checks failed' }
+
+$fakeGame = Join-Path $outDir 'Assembly-CSharp.dll'
+& $csc /nologo /target:library /langversion:5 /out:$fakeGame (Join-Path $PSScriptRoot 'FakeGame.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Game reflection fixture compilation failed' }
+$runtimeExe = Join-Path $outDir 'RuntimeTests.exe'
+& $csc /nologo /target:exe /langversion:5 /optimize+ /nowarn:0649 /out:$runtimeExe /reference:$JsonDll /reference:$fakeGame `
+    (Join-Path $repo 'src\AdoFalling\Main.cs') `
+    (Join-Path $repo 'src\AdoFalling\FallingPlugin.cs') `
+    (Join-Path $repo 'src\AdoFalling\FallingConfig.cs') `
+    (Join-Path $repo 'src\AdoFalling\SettingsFile.cs') `
+    (Join-Path $repo 'src\AdoFalling\GameClock.cs') `
+    (Join-Path $repo 'src\AdoFalling\AutoPlayDriver.cs') `
+    (Join-Path $repo 'src\AdoFalling\NoteInstance.cs') `
+    (Join-Path $PSScriptRoot 'RuntimeHost.cs') `
+    (Join-Path $PSScriptRoot 'RuntimeTests.cs')
+if ($LASTEXITCODE -ne 0) { throw 'UMM runtime test compilation failed' }
+& $runtimeExe (Join-Path $outDir 'runtime-fixtures')
+if ($LASTEXITCODE -ne 0) { throw 'UMM runtime checks failed' }

@@ -1,6 +1,5 @@
 using System;
 using System.Globalization;
-using BepInEx.Configuration;
 using UnityEngine;
 
 namespace AdoFalling
@@ -24,7 +23,6 @@ namespace AdoFalling
         private Rect _window = new Rect(40f, 40f, Width, 640f);
         private Font _font;
         private bool _fontTried;
-        private bool _fontInstalled;
 
         public bool Visible;
 
@@ -105,7 +103,6 @@ namespace AdoFalling
                         if (f != null)
                         {
                             _font = f;
-                            _fontInstalled = true;
                             FallingPlugin.Log.LogInfo("panel font: " + installed[j]);
                             return;
                         }
@@ -127,7 +124,6 @@ namespace AdoFalling
                     if (f != null)
                     {
                         _font = f;
-                        _fontInstalled = true;
                         FallingPlugin.Log.LogInfo("panel font: " + paths[i]);
                         return;
                     }
@@ -142,12 +138,29 @@ namespace AdoFalling
 
         private GUIStyle _label, _title, _section, _windowStyle;
         private Texture2D _panelFill, _borderTex;
+        private GUISkin _skin;
+
+        internal void Dispose()
+        {
+            if (_panelFill != null) UnityEngine.Object.Destroy(_panelFill);
+            if (_borderTex != null) UnityEngine.Object.Destroy(_borderTex);
+            if (_font != null) UnityEngine.Object.Destroy(_font);
+            if (_skin != null) UnityEngine.Object.Destroy(_skin);
+            _panelFill = null;
+            _borderTex = null;
+            _font = null;
+            _skin = null;
+        }
 
         private void EnsureStyles()
         {
             EnsureFont();
             if (_label != null)
                 return;
+
+            // Keep font/style changes local so UMM and other mods retain their skin.
+            _skin = UnityEngine.Object.Instantiate(GUI.skin);
+            _skin.hideFlags = HideFlags.HideAndDontSave;
 
             _label = new GUIStyle(GUI.skin.label);
             _label.fontSize = 14;
@@ -180,15 +193,15 @@ namespace AdoFalling
 
             if (_font != null)
             {
-                GUI.skin.button.font = _font;
-                GUI.skin.textField.font = _font;
-                GUI.skin.label.font = _font;
-                GUI.skin.box.font = _font;
-                GUI.skin.toggle.font = _font;
-                GUI.skin.window.font = _font;
+                _skin.button.font = _font;
+                _skin.textField.font = _font;
+                _skin.label.font = _font;
+                _skin.box.font = _font;
+                _skin.toggle.font = _font;
+                _skin.window.font = _font;
             }
-            GUI.skin.button.fontSize = 14;
-            GUI.skin.textField.fontSize = 14;
+            _skin.button.fontSize = 14;
+            _skin.textField.fontSize = 14;
         }
 
         // ---------------------------------------------------------------- drawing
@@ -232,8 +245,14 @@ namespace AdoFalling
             EnsureStyles();
             _engineRef = engine;
             HandleKeyboard(c, engine);
-            _window = GUI.Window(WindowId, _window, id => Contents(engine, c), " AdoFalling 控制面板 ", _windowStyle);
-            DrawBorder();
+            GUISkin previous = GUI.skin;
+            try
+            {
+                GUI.skin = _skin;
+                _window = GUI.Window(WindowId, _window, id => Contents(engine, c), " AdoFalling 控制面板 ", _windowStyle);
+                DrawBorder();
+            }
+            finally { GUI.skin = previous; }
         }
 
         /// <summary>
@@ -507,7 +526,7 @@ namespace AdoFalling
             return y + 22f;
         }
 
-        private float Toggle(float y, float rowH, string label, ConfigEntry<bool> entry)
+        private float Toggle(float y, float rowH, string label, Setting<bool> entry)
         {
             // Draw an explicit tick / cross: the stock toggle box alone is easy to misread.
             bool on = entry.Value;
@@ -530,7 +549,7 @@ namespace AdoFalling
         private const float labelWForToggle = 214f;
 
         /// <summary>A one-line selector: click (or Enter / arrow keys) to cycle the value.</summary>
-        private float Choice(float y, float rowH, string label, ConfigEntry<LaneMapping> entry)
+        private float Choice(float y, float rowH, string label, Setting<LaneMapping> entry)
         {
             GUI.Label(new Rect(16f, y, labelWForToggle, rowH), label, _label);
             if (GUI.Button(new Rect(24f + labelWForToggle, y, 200f, rowH),
@@ -539,7 +558,7 @@ namespace AdoFalling
             return y + rowH;
         }
 
-        private float Slider(float y, float rowH, float labelW, float sliderW, float fieldW,            string label, ConfigEntry<float> entry, float min, float max, ref string text)
+        private float Slider(float y, float rowH, float labelW, float sliderW, float fieldW,            string label, Setting<float> entry, float min, float max, ref string text)
         {
             if (Mark(y, rowH))
                 GUI.Label(new Rect(6f, y, 8f, rowH), "▶", _label);
@@ -565,7 +584,7 @@ namespace AdoFalling
         }
 
         private float Slider(float y, float rowH, float labelW, float sliderW, float fieldW,
-            string label, ConfigEntry<double> entry, float min, float max, ref string text)
+            string label, Setting<double> entry, float min, float max, ref string text)
         {
             GUI.Label(new Rect(16f, y, labelW, rowH), label, _label);
 

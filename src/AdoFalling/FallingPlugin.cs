@@ -1,8 +1,4 @@
 using System;
-using System.Reflection;
-using BepInEx;
-using BepInEx.Logging;
-using HarmonyLib;
 using UnityEngine;
 
 namespace AdoFalling
@@ -15,10 +11,9 @@ namespace AdoFalling
     /// playable underneath. The overlay is a pure visualisation: ADOFAI keeps handling
     /// input and judgement.
     /// </summary>
-    [BepInPlugin(PluginInfo.Guid, PluginInfo.Name, PluginInfo.Version)]
-    public class FallingPlugin : BaseUnityPlugin
+    public class FallingPlugin : MonoBehaviour
     {
-        internal static ManualLogSource Log;
+        internal static ModLog Log;
         internal static FallingPlugin Instance;
         internal static FallingConfig Cfg;
 
@@ -35,12 +30,11 @@ namespace AdoFalling
         private double _prevNow;
         private double _rawBeforeFrame;
         private string _lastAutoStatus = "";
+        private bool _stopped;
 
-        private void Awake()
+        internal void Initialize()
         {
             Instance = this;
-            Log = Logger;
-            Cfg = new FallingConfig(Config);
             Log.LogInfo(PluginInfo.Name + " " + PluginInfo.Version + " loading");
             Log.LogInfo(string.Format(
                 "config: DebugHud={0} DemoMode={1} AutoPlay={2} CountdownLead={3} NoteSpeed={4} JudgeLineY={5} LaneMapping={6}",
@@ -53,21 +47,11 @@ namespace AdoFalling
             _engine = new FallingEngine(_view, _chart, Cfg);
             _renderer = new OverlayRenderer();
             _view.Build();
-
-            var harmony = new Harmony(PluginInfo.Guid);
-            try
-            {
-                harmony.PatchAll(Assembly.GetExecutingAssembly());
-                Log.LogInfo("harmony patches applied");
-            }
-            catch (Exception ex)
-            {
-                Log.LogWarning("harmony PatchAll: " + ex.Message);
-            }
         }
 
         private void Update()
         {
+            if (_stopped) return;
             try
             {
                 // Hotkey is polled every frame so it stays responsive.
@@ -180,19 +164,12 @@ namespace AdoFalling
         private void HandleTuningKeys()
         {
             if (Input.GetKeyDown(Cfg.ControlPanelKey.Value))
-            {
-                _panel.Visible = !_panel.Visible;
-                if (_panel.Visible)
-                {
-                    _panel.SyncFromConfig(Cfg);
-                    Log.LogInfo("control panel opened");
-                }
-                else
-                {
-                    Config.Save();
-                    Log.LogInfo("control panel closed - settings saved");
-                }
-            }
+                TogglePanel();
+
+            if (Input.GetKeyDown(Cfg.TuneKey.Value))
+                Log.LogInfo(string.Format("alignment: raw={0:F3}s displayed={1:F3}s lead={2:F3}s trim={3:F3}s hold={4:F3}s",
+                    _clock.SongPosition, _clock.SongTime, _clock.LeadOffset,
+                    Cfg.LeadOffsetManual.Value, Cfg.HoldOffsetSeconds.Value));
 
             float step = (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
                 ? 0.05f : 0.01f;
@@ -232,7 +209,7 @@ namespace AdoFalling
 
             if (holdChanged)
             {
-                Config.Save();
+                Main.SaveSettings();
                 Log.LogInfo(string.Format(
                     "hold trim: offset={0:F3}s scale={1:F2}  ('-' later, '=' earlier, Backspace reset, [ ] scale)",
                     Cfg.HoldOffsetSeconds.Value, Cfg.HoldScale.Value));
@@ -282,12 +259,39 @@ namespace AdoFalling
         /// <summary>True while the control panel is open.</summary>
         internal bool Tuning { get { return _panel != null && _panel.Visible; } }
 
+        internal void TogglePanel()
+        {
+            if (_stopped) return;
+            _panel.Visible = !_panel.Visible;
+            if (_panel.Visible) _panel.SyncFromConfig(Cfg);
+            else Main.SaveSettings();
+        }
+
+        internal void Shutdown()
+        {
+            if (_stopped) return;
+            _stopped = true;
+            if (_clock != null) _clock.DetachHitHook();
+            _autoPlay.Apply(false);
+            MacroPlan.Active = false;
+            _panel.Visible = false;
+            if (_renderer != null) _renderer.Dispose();
+            _panel.Dispose();
+            Main.SaveSettings();
+            if (ReferenceEquals(Instance, this)) Instance = null;
+        }
+
+        private void OnDisable() { Shutdown(); }
+        private void OnDestroy() { Shutdown(); }
+        private void OnApplicationQuit() { Shutdown(); }
+
         /// <summary>
         /// IMGUI draws over the finished frame, which is the only path that reliably
         /// composites a plugin's overlay in this game's render setup.
         /// </summary>
         private void OnGUI()
         {
+            if (_stopped) return;
             try
             {
                 // The control panel must stay reachable even while the overlay itself is hidden,
@@ -330,7 +334,7 @@ namespace AdoFalling
             style.fontSize = Mathf.RoundToInt(16f * refScale);
             style.alignment = TextAnchor.UpperLeft;
 
-            const string hint = "按 F5 调出控制面板";
+            string hint = "按 " + Cfg.ControlPanelKey.Value + " 调出控制面板";
             Vector2 size = style.CalcSize(new GUIContent(hint));
 
             float pad = 8f * refScale;
@@ -360,12 +364,12 @@ namespace AdoFalling
             _clock.Crotchet = _clock.Bpm > 0.0 ? 60.0 / _clock.Bpm : 0.4;
             _clock.SeqId = (int)(_demoTime / _clock.Crotchet);
             _clock.ForceTime(_demoTime + 1.5);
-        }    }
+        }
+    }
 
     internal static class PluginInfo
     {
-        public const string Guid = "com.dsh.adofalling";
         public const string Name = "AdoFalling - falling-note overlay";
-        public const string Version = "0.6.0";
+        public const string Version = "0.7.0";
     }
 }

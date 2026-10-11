@@ -167,6 +167,7 @@ namespace AdoFalling
         private static FieldInfo _onHitField;
         private static string _handlerName;
         private object _boundPlayer;
+        private Delegate _hitHandler;
 
         private static void ProbeHitHook()
         {
@@ -232,12 +233,15 @@ namespace AdoFalling
                 if (player == null || ReferenceEquals(player, _boundPlayer))
                     return;
 
+                DetachHitHook();
+
                 MethodInfo handler = typeof(GameClock).GetMethod(_handlerName,
                     BindingFlags.NonPublic | BindingFlags.Instance);
                 Delegate d = Delegate.CreateDelegate(_onHitField.FieldType, this, handler);
                 object existing = _onHitField.GetValue(player);
                 _onHitField.SetValue(player, Delegate.Combine(existing as Delegate, d));
                 _boundPlayer = player;
+                _hitHandler = d;
                 FallingPlugin.Log.LogInfo("hit hook attached to scrPlayer.onHit");
             }
             catch (Exception ex)
@@ -245,6 +249,19 @@ namespace AdoFalling
                 _probeFailed = true;
                 FallingPlugin.Log.LogWarning("hit hook bind failed: " + ex.Message);
             }
+        }
+
+        /// <summary>Remove only our callback, preserving other mods' hit handlers.</summary>
+        internal void DetachHitHook()
+        {
+            if (_boundPlayer == null || _hitHandler == null || _onHitField == null) return;
+            try
+            {
+                Delegate current = _onHitField.GetValue(_boundPlayer) as Delegate;
+                _onHitField.SetValue(_boundPlayer, Delegate.Remove(current, _hitHandler));
+            }
+            catch (Exception ex) { FallingPlugin.Log.LogWarning("hit hook detach failed: " + ex.Message); }
+            finally { _boundPlayer = null; _hitHandler = null; }
         }
 
         /// <summary>
