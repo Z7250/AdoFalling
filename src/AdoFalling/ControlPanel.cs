@@ -290,7 +290,7 @@ namespace AdoFalling
                 case 18: c.LaneAlpha.Value = Clamp(c.LaneAlpha.Value + dir * 0.02f * coarse, 0f, 1f); break;
                 case 19: c.HoldBodyOpacity.Value = Clamp(c.HoldBodyOpacity.Value + dir * 0.02f * coarse, 0f, 1f); break;
                 case 27: c.LaneMapping.Value = NextMapping(c.LaneMapping.Value); break;
-                case 28: c.FingeringWindowMs.Value = Clamp(c.FingeringWindowMs.Value + dir * 5f * coarse, 60f, 400f); break;
+                case 28: c.FingeringWindowMs.Value = Clamp(c.FingeringWindowMs.Value + dir * 5f * coarse, 5f, 400f); break;
                 case 0: case 1: case 2: case 3: case 4:
                 case 20: case 21: case 22: case 23: case 24: case 25: case 26:
                     ToggleAt(c, sel);
@@ -335,8 +335,7 @@ namespace AdoFalling
         {
             switch (m)
             {
-                case LaneMapping.Fingering: return LaneMapping.Macro;
-                case LaneMapping.Macro: return LaneMapping.Position;
+                case LaneMapping.Fingering: case LaneMapping.Macro: return LaneMapping.Position;
                 case LaneMapping.Position: return LaneMapping.Cycle;
                 case LaneMapping.Cycle: return LaneMapping.Sequential;
                 default: return LaneMapping.Fingering;
@@ -347,8 +346,7 @@ namespace AdoFalling
         {
             switch (m)
             {
-                case LaneMapping.Fingering: return "人性化（轮指/交替）";
-                case LaneMapping.Macro: return "宏排键（谱面文件）";
+                case LaneMapping.Fingering: case LaneMapping.Macro: return "手组交替（八轨轮指）";
                 case LaneMapping.Position: return "按进入方向";
                 case LaneMapping.Cycle: return "按序号循环";
                 default: return "按顺序";
@@ -362,7 +360,7 @@ namespace AdoFalling
             if (plan == null)
             {
                 if (!string.IsNullOrEmpty(c.FilePath.Value))
-                    return "谱面文件：未载入（进关卡按 F 开始）";
+                    return "谱面文件：未载入（进关卡按 " + c.LoadKey.Value + " 开始）";
                 return "谱面文件：未配置（Chart/FilePath）";
             }
 
@@ -373,7 +371,7 @@ namespace AdoFalling
 
             if (MacroPlan.Active)
                 return string.Format("谱面文件：已开始 {0}（锚点 {1:F2}s）", name, MacroPlan.AnchorSongTime);
-            return "谱面文件：已载入 " + name + "，按 F 开始";
+            return "谱面文件：已载入 " + name + "，按 " + c.LoadKey.Value + " 开始";
         }
 
         private static float Clamp(float v, float lo, float hi)
@@ -437,10 +435,10 @@ namespace AdoFalling
 
             y = Section(y, "排键 / 轨道映射");
             y = Choice(y, rowH, "排键方式", c.LaneMapping);
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "轮指窗口(毫秒)", c.FingeringWindowMs, 60f, 400f, ref _fingerWindow);
-            y = Key(y, "人性化 = 快速连打轮指、较慢音符两指交替（永不连压同轨）");
+            y = Slider(y, rowH, labelW, sliderW, fieldW, "换手保护(毫秒)", c.FingeringWindowMs, 5f, 400f, ref _fingerWindow);
+            y = Key(y, "ASDF / JKL;：单音 F/J 交替，加密音符由外向内轮指");
             y = Key(y, MacroPlanSummary(c));
-            y = Key(y, "宏排键需要 Chart/FilePath 里的谱面文件；按 F 载入并切换");
+            y = Key(y, "反拍自动调整分组；谱面文件按 " + c.LoadKey.Value + " 载入");
 
             y = Section(y, "操作");
             float bw = (Width - 60f) / 3f;
@@ -488,7 +486,7 @@ namespace AdoFalling
                 "透明度→判定线", "透明度→音符", "透明度→轨道底色", "透明度→轨道边框", "透明度→长按尾迹",
                 "开关→长按缩短", "开关→跳过松手方块", "开关→开场从顶端", "开关→音符倾斜",
                 "开关→轨道右到左", "开关→诊断信息", "开关→自动播放",
-                "排键方式", "轮指窗口(毫秒)",
+                "排键方式", "换手保护(毫秒)",
                 "操作→恢复默认", "操作→长按归零", "操作→清除统计",
             };
             if (sel < 0 || sel >= names.Length)
@@ -633,7 +631,7 @@ namespace AdoFalling
             c.JudgeLineY.Value = 0.18f;
             c.NoteSpeedPxPerSec.Value = 620f;
             c.NoteHeight.Value = 26f;
-            c.LaneWidth.Value = 110f;
+            c.LaneWidth.Value = 70f;
             c.LaneGap.Value = 8f;
             c.JudgeOpacity.Value = 1f;
             c.NoteOpacity.Value = 1f;

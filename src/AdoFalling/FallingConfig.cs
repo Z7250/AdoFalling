@@ -95,9 +95,19 @@ public readonly ConfigEntry<float> LaneFlashStrength;
         {
             ToggleKey = f.Bind("General", "ToggleKey", KeyCode.F8,
                 "Show/hide the falling overlay");
-            LoadKey = f.Bind("General", "LoadKey", KeyCode.F,
-                "Load/refresh the .adofai file in Chart/FilePath and switch the lane mapping " +
-                "to Macro (ReADOFAIMacro's own fingering computed from the file)");
+            LoadKey = f.Bind("General", "LoadKey", KeyCode.F4,
+                "Load/refresh the .adofai file in Chart/FilePath. File timing uses the same " +
+                "eight-key alternating hand groups as the live chart");
+            // F used to activate file mode. It is now the left index lane: accepting
+            // it here would restart the timeline on every normal index tap.
+            switch (LoadKey.Value)
+            {
+                case KeyCode.A: case KeyCode.S: case KeyCode.D: case KeyCode.F:
+                case KeyCode.J: case KeyCode.K: case KeyCode.L: case KeyCode.Semicolon:
+                    LoadKey.Value = KeyCode.F4;
+                    FallingPlugin.Log.LogInfo("LoadKey overlapped ASDFJKL; and was migrated to F4");
+                    break;
+            }
             PollInterval = f.Bind("General", "PollInterval", 0.05f,
                 "Seconds between game-state polls (chart / time)");
             DebugHud = f.Bind("General", "DebugHud", false,
@@ -122,22 +132,22 @@ public readonly ConfigEntry<float> LaneFlashStrength;
                 "Fall speed in pixels per second at 1080p reference height");
             NoteHeight = f.Bind("Layout", "NoteHeight", 26f,
                 "Note height in pixels at 1080p reference height");
-            LaneWidth = f.Bind("Layout", "LaneWidth", 110f, "Lane width in pixels");
+            LaneWidth = f.Bind("Layout", "LaneWidth", 70f, "Lane width in pixels (eight lanes: ASDFJKL;)");
             LaneGap = f.Bind("Layout", "LaneGap", 8f, "Gap between lanes in pixels");
             MirrorDirection = f.Bind("Layout", "RightToLeft", false,
                 "Lay lanes out right-to-left instead of left-to-right");
             LaneMapping = f.Bind("Layout", "LaneMapping", AdoFalling.LaneMapping.Fingering,
-                "How chart tiles pick a lane: Fingering = human fingering (rolls on fast notes, " +
-                "two-finger alternation on slower ones), Position = from the tile's entry " +
-                "direction, Cycle = tile number modulo 4, Sequential = one after another");
+                "Fingering = alternating eighth-beat hand groups on ASDF/JKL;, " +
+                "outside-to-index rolls within each group. Macro is a legacy alias for the " +
+                "same allocator. Position = entry direction; Cycle / Sequential use eight lanes");
             FingeringWindowMs = f.Bind("Chart", "FingeringWindowMs", 180.0,
-                "LaneMapping=Fingering: notes closer than this many milliseconds are played as " +
-                "a roll across the lanes; slower notes alternate between lanes 1 and 2. Lower = " +
-                "roll more, higher = tap more. Tune it live in the F5 panel's 排键 section");
+                "Cross-hand protection window in milliseconds, capped at one quarter of the " +
+                "local hand-group duration. Close notes prefer one outside-to-index roll. " +
+                "Subdivision comes from local BPM, not this threshold");
             FilePath = f.Bind("Chart", "FilePath", "",
-                "Path to the .adofai chart file used by LaneMapping=Macro: the plan is " +
-                "ReADOFAIMacro's own fingering computed from the file (twirl/pause/SetSpeed " +
-                "included). Load it with the load key (F by default) while in a level");
+                "Path to the .adofai chart file supplying press times and local BPM " +
+                "(Twirl/Pause/SetSpeed). Lanes use the common eight-key hand-group allocator. " +
+                "Load it with the load key (F4 by default) while in a level");
             FileOffsetSeconds = f.Bind("Chart", "FileOffsetSeconds", 0.0,
                 "Fine trim for the file chart timeline, in seconds. Positive makes every note " +
                 "later. Only used by the file mode (load key)");

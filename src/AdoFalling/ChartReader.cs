@@ -26,6 +26,7 @@ namespace AdoFalling
         private bool _statusFromPlay;
         private LaneMapping _lastMapping;
         private MacroPlan _lastPlan;
+        private double _lastWindowMs;
         private string _fingering = "";
 
         /// <summary>_lastCount marker that means "these notes came from a chart file".</summary>
@@ -101,15 +102,16 @@ namespace AdoFalling
         {
             FallingConfig c = FallingPlugin.Cfg;
 
-            // Switching the lane mapping (F5 panel) invalidates every lane, so the chart is
-            // re-read with the new mapping on the next frame. A freshly loaded macro plan
-            // from a chart file invalidates them the same way.
-            if (c.LaneMapping.Value != _lastMapping || MacroPlan.Current != _lastPlan)
+            // Re-plan when the panel changes mapping/protection. Preserve consumed state
+            // and the timing anchor; tuning must not bring already-hit notes back.
+            if (c.LaneMapping.Value != _lastMapping || MacroPlan.Current != _lastPlan
+                || c.FingeringWindowMs.Value != _lastWindowMs)
             {
                 if (_notes.Count > 0)
-                    Rebuild();
+                    ReassignLanes(c);
                 _lastMapping = c.LaneMapping.Value;
                 _lastPlan = MacroPlan.Current;
+                _lastWindowMs = c.FingeringWindowMs.Value;
             }
 
             if (!st.Playing)
@@ -245,6 +247,8 @@ namespace AdoFalling
 
                 NoteInstance n = default(NoteInstance);
                 n.HitTime = t;
+                double speed = ToDouble(Read(f, _floorSpeed));
+                n.BeatSeconds = 60.0 / baseBpm / (speed > 0.0 ? speed : 1.0);
                 n.Lane = LaneFor(c, seq, ang, i);
                 n.DistancePx = 0f;
                 n.SeqId = seq;
@@ -268,53 +272,7 @@ namespace AdoFalling
                 _notes.Add(n);
             }
 
-            // Lane plan: either the built-in human allocator (derived from the live timing),
-            // or ReADOFAIMacro's own fingering when a chart file has been loaded.
-            _fingering = "";
-            if (c.LaneMapping.Value == LaneMapping.Macro)
-            {
-                MacroPlan plan = MacroPlan.Current;
-                if (plan == null && !string.IsNullOrEmpty(c.FilePath.Value))
-                {
-                    string loadMessage;
-                    plan = MacroPlan.TryLoad(c.FilePath.Value, out loadMessage);
-                }
-
-                if (plan != null && plan.FloorCount == floors.Count)
-                {
-                    int assigned = 0;
-                    int missing = 0;
-                    for (int i = 0; i < _notes.Count; i++)
-                    {
-                        NoteInstance n = _notes[i];
-                        int lane = plan.LaneForSeq(n.SeqId);
-                        if (lane >= 0)
-                        {
-                            n.Lane = lane;
-                            _notes[i] = n;
-                            assigned++;
-                        }
-                        else
-                        {
-                            missing++;
-                        }
-                    }
-                    _fingering = string.Format(
-                        "macro plan: {0}; {1} notes matched, {2} without a planned press",
-                        plan.Status, assigned, missing);
-                }
-                else
-                {
-                    _fingering = FingeringPlanner.Assign(_notes, c.FingeringWindowMs.Value);
-                    _fingering = "no usable chart file (" +
-                        (plan == null ? "none loaded" : "tile count mismatch") +
-                        ") - built-in plan instead; " + _fingering;
-                }
-            }
-            else if (c.LaneMapping.Value == LaneMapping.Fingering)
-            {
-                _fingering = FingeringPlanner.Assign(_notes, c.FingeringWindowMs.Value);
-            }
+            ReassignLanes(c);
 
             Status = string.Format(
                 "{0} notes from {1} tiles (auto -{2}, midspin -{3}, same-beat -{4}, hold-release -{5}, holds {6})",
@@ -329,6 +287,24 @@ namespace AdoFalling
                     _notes.Count, _notes[0].HitTime, _notes[_notes.Count - 1].HitTime);
         }
 
+        /// <summary>Re-plan lanes without restoring consumed notes or changing the file anchor.</summary>
+        private void ReassignLanes(FallingConfig c)
+        {
+            if (c.LaneMapping.Value == LaneMapping.Fingering || c.LaneMapping.Value == LaneMapping.Macro)
+                _fingering = FingeringPlanner.Assign(_notes, c.FingeringWindowMs.Value);
+            else
+            {
+                _fingering = "";
+                for (int i = 0; i < _notes.Count; i++)
+                {
+                    NoteInstance n = _notes[i];
+                    double angle = n.Floor != null ? ToDouble(Read(n.Floor, _floorEntryAngle)) : 0.0;
+                    n.Lane = LaneFor(c, n.SeqId, angle, i);
+                    _notes[i] = n;
+                }
+            }
+        }
+
         /// <summary>Synthetic 4/4 chart used by DemoMode.</summary>
         private void BuildDemoChart(GameClock st)
         {
@@ -338,12 +314,11 @@ namespace AdoFalling
             _lastCount = -2;
             FallingConfig c = FallingPlugin.Cfg;
             double beat = st.Crotchet > 0.0001 ? st.Crotchet : 0.4;
-            int lane = 0;
             for (int i = 0; i < 400; i++)
             {
                 NoteInstance n = default(NoteInstance);
                 n.HitTime = i * beat;
-                n.Lane = lane;
+                n.BeatSeconds = beat;
                 n.DistancePx = 0f;
                 n.SeqId = -1;
                 n.HoldSeconds = 0.0;
@@ -354,16 +329,15 @@ namespace AdoFalling
                 n.Active = true;
                 n.Consumed = false;
                 _notes.Add(n);
-                // a simple readable pattern: step, step, jump back
-                lane = (lane + ((i % 4 == 3) ? 3 : 1)) % 4;
             }
+            ReassignLanes(c);
             Status = "demo chart: " + _notes.Count + " notes @" + st.Bpm.ToString("F0") + "bpm";
             ChartSignature = "demo, beat=" + beat.ToString("F3") + "s";
         }
 
         /// <summary>
         /// File mode: build the whole timeline from the loaded .adofai file. The notes and
-        /// their lanes are exactly ReADOFAIMacro's plan (press k is due at PressTimes[k]),
+        /// their timing uses the macro plan (press k is due at PressTimes[k]),
         /// anchored at the moment the load key was pressed. No live level data is used; a
         /// running level only provides the song clock (and, if readable, a one-time sync
         /// check that is written to the log).
@@ -402,8 +376,7 @@ namespace AdoFalling
                 NoteInstance n = default(NoteInstance);
                 n.HitTime = anchor + offset + plan.PressTimes[k];
                 n.SeqId = plan.PressSeqIds[k];
-                int lane = plan.LaneForSeq(n.SeqId);
-                n.Lane = lane >= 0 ? lane : 0;
+                n.BeatSeconds = plan.PressBeatSeconds[k];
                 n.HoldSeconds = 0.0;
                 n.DistancePx = 0f;
                 n.Color = c.NoteColorValue;
@@ -413,11 +386,11 @@ namespace AdoFalling
             }
 
             HoldCount = 0;
-            _fingering = string.Format(
-                "file chart: {0}; anchor {1:F3}s, offset {2:+0.000;-0.000;+0.000}s",
-                plan.Status, anchor, offset);
-            Status = string.Format("{0} notes from the chart file (macro plan)", _notes.Count);
-            FallingPlugin.Log.LogInfo("chart read (file): " + Status + "; " + _fingering);
+            ReassignLanes(c);
+            Status = string.Format("{0} notes from the chart file; {1}", _notes.Count, _fingering);
+            FallingPlugin.Log.LogInfo(string.Format(
+                "chart read (file): {0}; anchor {1:F3}s, offset {2:+0.000;-0.000;+0.000}s",
+                Status, anchor, offset));
 
             // One-time cross-check: where does the live chart put its first press? If this
             // differs a lot from the anchor, the file was started at the wrong moment.
@@ -604,19 +577,18 @@ namespace AdoFalling
             switch (c.LaneMapping.Value)
             {
                 case LaneMapping.Cycle:
-                    return ((seq % 4) + 4) % 4;
+                    return ((seq % FallingView.LaneCount) + FallingView.LaneCount) % FallingView.LaneCount;
                 case LaneMapping.Position:
                     {
-                        // Quantise the entry direction to the nearest 90 degrees; ADOFAI's
+                        // Quantise the entry direction into eight equal sectors; ADOFAI's
                         // angle 0 points right and angles grow counter-clockwise.
                         double deg = angleRad * 57.29577951308232;
-                        int q = (int)Math.Round(deg / 90.0);
-                        q = ((q % 4) + 4) % 4;
-                        // 0deg -> lane 3, 90deg -> lane 2, 180deg -> lane 1, 270deg -> lane 0
-                        return 3 - q;
+                        int q = (int)Math.Round(deg / (360.0 / FallingView.LaneCount));
+                        q = ((q % FallingView.LaneCount) + FallingView.LaneCount) % FallingView.LaneCount;
+                        return FallingView.LaneCount - 1 - q;
                     }
                 default:
-                    return ((index % 4) + 4) % 4;
+                    return ((index % FallingView.LaneCount) + FallingView.LaneCount) % FallingView.LaneCount;
             }
         }
 
@@ -761,12 +733,11 @@ namespace AdoFalling
         Cycle,
         Position,
 
-        /// <summary>Built-in human fingering: roll across the lanes on fast notes, alternate
-        /// the two index lanes on slower ones (see FingeringPlanner).</summary>
+        /// <summary>Alternating hand groups, with outside-to-index rolls on eight lanes.</summary>
         Fingering,
 
-        /// <summary>ReADOFAIMacro's own fingering, computed from the chart file loaded with
-        /// the load key (see MacroPlan). Falls back to Fingering without a file.</summary>
+        /// <summary>Legacy config value; uses the same hand-group allocator as Fingering.
+        /// A loaded file supplies timing, not a separate lane algorithm.</summary>
         Macro
     }
 }

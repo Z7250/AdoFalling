@@ -76,9 +76,6 @@ namespace AdoFalling
             if (lane < 0) lane = 0;
             if (lane >= FallingView.LaneCount) lane = FallingView.LaneCount - 1;
             int idx = cfg.MirrorDirection.Value ? (FallingView.LaneCount - 1 - lane) : lane;
-            // Same 0<->2, 1<->3 lane order as FallingView.Layout, so notes, lane washes,
-            // bursts and judgement text all land on the same swapped columns.
-            idx ^= 2;
             return x0 + idx * (laneW + laneGap);
         }
 
@@ -129,6 +126,14 @@ namespace AdoFalling
                     Fill(new Rect(x + laneW - t, stripTop, t, stripHeight), edge);
                     // bottom edge of the lane, sitting on the judgement line
                     Fill(new Rect(x, judgeY - t, laneW, t), edge);
+                }
+                GUIStyle keyStyle = TextStyle();
+                keyStyle.fontSize = Mathf.RoundToInt(16f * refScale);
+                for (int lane = 0; lane < FallingView.LaneCount; lane++)
+                {
+                    float x = LaneX(cfg, x0, laneW, laneGap, lane);
+                    GUI.Label(new Rect(x, judgeY + noteH, laneW, 24f * refScale),
+                        FingeringPlanner.Keys[lane].ToString(), keyStyle);
                 }
             }
 

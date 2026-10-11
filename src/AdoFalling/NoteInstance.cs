@@ -8,6 +8,9 @@ namespace AdoFalling
         /// <summary>Song time (seconds) at which the note must reach the judgement line.</summary>
         public double HitTime;
 
+        /// <summary>Local quarter-note duration, including tempo changes; 0 if unknown.</summary>
+        public double BeatSeconds;
+
         /// <summary>0 .. FallingView.LaneCount-1.</summary>
         public int Lane;
 

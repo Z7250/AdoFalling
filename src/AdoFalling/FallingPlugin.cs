@@ -135,7 +135,8 @@ namespace AdoFalling
 
         /// <summary>
         /// Load / refresh the .adofai chart file in Chart/FilePath and start file mode: the
-        /// overlay's chart and 排键 come from the file, the first press of the macro plan is
+        /// overlay's timing comes from the file and lanes use the shared hand-group planner.
+        /// The first press of the file plan is
         /// due at the moment this key is pressed (press it on the first tile, like the macro).
         /// </summary>
         private void LoadChartFile()
@@ -164,7 +165,7 @@ namespace AdoFalling
 
             MacroPlan.Active = true;
             MacroPlan.AnchorSongTime = _clock.SongPosition;
-            Cfg.LaneMapping.Value = LaneMapping.Macro;
+            Cfg.LaneMapping.Value = LaneMapping.Fingering;
             _view.SetVisible(true);   // starting the reader also shows the overlay
             _chart.Rebuild();         // drop the old notes so the file chart is built fresh
             Log.LogInfo(string.Format(
@@ -365,6 +366,6 @@ namespace AdoFalling
     {
         public const string Guid = "com.dsh.adofalling";
         public const string Name = "AdoFalling - falling-note overlay";
-        public const string Version = "0.5.1";
+        public const string Version = "0.6.0";
     }
 }

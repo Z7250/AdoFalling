@@ -1,6 +1,6 @@
 # AdoFalling — 冰与火之舞「下落式音游」叠加层 MOD
 
-在原版《A Dance of Fire and Ice》画面上叠加一个下落式音游（4K/VSRG 风格）的界面：
+在原版《A Dance of Fire and Ice》画面上叠加一个下落式音游（8K/VSRG 风格）的界面：
 **判定线、轨道、下落按键不透明，其余全部透明**，所以原版谱面（星球、方块、路径）依然完整可见。
 本 MOD 只做「可视化读谱」，不接管判定：打歌仍由原版负责，叠加层把谱面按时间轴显示成下落按键。
 
@@ -99,42 +99,69 @@
 
 鼠标若可用也可以直接拖滑块、点输入框、点按钮；两种方式都能用。
 
-### 谱面文件模式 —— 完全复刻 [ReADOFAIMacro](https://github.com/TonyLimps/ReADOFAIMacro) 的按键（`Chart/FilePath` + `F`）
+### 谱面文件模式 —— 文件时间轴 + 八轨手组排键（`Chart/FilePath` + `F4`）
 
 这是现在的主用方式，读谱辅助**只依赖谱面文件**，不需要读取游戏当前的关卡：
 
 1. 在配置里把 `Chart/FilePath` 填成 .adofai 的完整路径（本机已默认填好
    `tmp\OfficialCharts\CE-TX Dramatic Entrance!.adofai`）；
-2. 进关卡，在**第一个音符该打的时候按 F**（`General/LoadKey`）—— 就像 ReADOFAIMacro
-   在第一个轨道上按开始键那样。F 会载入/刷新谱面文件，并把"计划第一次按键"对齐到按下的瞬间；
-3. 叠加层随后按文件显示整张谱面：下落时间轴和**排键**都来自文件，排键是
-   **ReADOFAIMacro 原版算法的按键序列**（`PlayScript.cpp` 的完整移植：旋转角处理、
-   Twirl / Pause / SetSpeed、180° 分组、轮指/硬抗分指、换手）——不是近似、不是自创规则。
+2. 进关卡，在**第一个音符该打的时候按 F4**（`General/LoadKey`）。F4 会载入/刷新谱面文件，
+   并把“计划第一次按键”对齐到按下的瞬间；游戏本身仍需正常按键。
+3. 叠加层随后按文件显示整张谱面：时间轴沿用 [ReADOFAIMacro](https://github.com/TonyLimps/ReADOFAIMacro)
+   的旋转角、Twirl / Pause / SetSpeed 处理；轨道由与实时模式相同的八轨手组算法分配。
+   文件中的局部 BPM 会传给排键器，变速不会被误认为十六分加密。文件模式仍只生成普通音符。
 
 细节：
 
-- **按键 → 轨道**：主手手指 1..4 → 轨道 0..3，副手镜像（3..0）；>4 个一组的继续绕圈。
-- **重开**：死了重来后再按一次 F 即可重新对齐；检测到歌曲回溯（重开）也会自动重新锚定，
-  但按 F 最准。
-- **离开关卡**自动结束文件模式，下次进关卡再按 F。
+- **按键 → 轨道**：屏幕从左到右为 `A S D F J K L ;`，左手 `A→S→D→F`，右手 `;→L→K→J`。
+  每手最多四音；更密时缩短手组周期，增加换手频率。
+- **重开**：死了重来后再按一次 F4 即可重新对齐；检测到歌曲回溯（重开）也会自动重新锚定，
+  但按 F4 最准。
+- **离开关卡**自动结束文件模式，下次进关卡再按 F4。
 - **微调**：`Chart/FileOffsetSeconds`（秒，正数 = 整体更晚）用来校准手感。
 - 日志里会打两行关键信息：
   `chart read (file): ... anchor ...s`（本次锚点）与
   `file chart sync check: live tile 1 at ...s, file anchor ...s (diff ...s)`——
-  diff 接近 0 说明 F 按在该打第一个音符的时刻。
-- `F` 在 `FilePath` 为空时 = 关闭文件模式，回到实时读谱。
+  diff 接近 0 说明 F4 按在该打第一个音符的时刻。
+- `F4` 在 `FilePath` 为空时 = 关闭文件模式，回到实时读谱。
+- 旧启动键如果是 `A/S/D/F/J/K/L/;`，会自动迁移为 F4，避免演奏时反复重置时间轴。
 
 ### 实时模式（不填 `FilePath` 时）：`LaneMapping`
 
 不依赖文件、直接从游戏读谱时，轨道映射可选：
 
-- `Fingering`（默认）：内置人性化排键 —— 快速连打展开 4 轨轮指、较慢音符在中间两轨两指交替，
-  永不连压同轨；`Chart/FingeringWindowMs`（默认 180ms）是轮指/交替的分界，可在 F5 面板里调；
-- `Macro`：若配置了谱面文件，用文件里的宏按键计划给实时音符重排轨道（按 seqID 对齐）；
+- `Fingering`（默认）：以局部 BPM 的八分时长为基础，左右手按组交替，组内由外向内；
+- `Macro`：兼容旧配置的名称，行为与 `Fingering` 相同；F5 不再单独列出这个重复选项；
 - `Position` / `Cycle` / `Sequential`：按进入方向 / 按序号循环 / 按顺序。
 
 F5 面板 **排键 / 轨道映射 → 排键方式** 一行可用 ↑↓ 选中、←→ 或 Enter 切换；
 面板里还显示谱面文件是否已载入/已开始。
+
+### 八轨手组规则
+
+布局固定为八轨，单音优先使用中央的 F/J 食指；加密时逐渐启用外侧手指。
+
+| 每手组音符数 | 左手 | 右手 | 基础手组保持八分时 |
+|---|---|---|---|
+| 1 | F | J | 八分 |
+| 2 | D→F | K→J | 十六分 |
+| 3 | S→D→F | L→K→J | 二十四分 |
+| 4 | A→S→D→F | ;→L→K→J | 三十二分 |
+
+例如八分接十六分为 `F｜J｜DF｜KJ｜DF｜KJ`，不会因间隔变短而立刻每音换手。
+同一手在相邻轮次复用食指是首选；组内使用不同手指，避免密集同指重复。
+
+反拍通过调整手组边界或建立新相位处理，空拍不自动换手。排键器对每个音符位置保留最多
+12 个候选，比较一至四音分组：优先手组交替，惩罚极短间隔跨手，同时保留基础节奏。
+若一组容量不足，就减半周期；长按期间对应键不可复用，必要时使用其他手指或同手接组。
+命中时间、音符数量和长按长度保持读谱结果，排键只改轨道。
+
+`Chart/FingeringWindowMs` 保留旧配置键，F5 中改名为“换手保护(毫秒)”：
+它控制极短间隔跨手的惩罚，上限为局部手组周期的四分之一，不再作为音符细分的阈值。
+调参会重新排键，保留已命中状态与文件锚点。
+
+八轨默认宽度为 70px。旧配置的 `LaneWidth` 会继续生效，可在 F5 中调整或恢复默认。
+这些键名是读谱指引，插件仍由原版游戏负责输入与判定。
 
 
 
@@ -306,7 +333,7 @@ AudioManager.Play("snd" + hitSound, AudioSettings.dspTime + 0.02, conductor.hitS
 | 段 | 键 | 默认 | 说明 |
 |---|---|---|---|
 | General | `ToggleKey` | `F8` | 显隐热键 |
-| General | `LoadKey` | `F` | 载入谱面文件并开始文件模式（在关卡里第一个音符处按）；`FilePath` 为空时 = 关闭文件模式 |
+| General | `LoadKey` | `F4` | 文件模式启动键；与八个读谱键冲突的旧配置自动迁移为 F4 |
 | General | `PollInterval` | `0.05` | 游戏状态轮询间隔（秒） |
 | General | `DebugHud` | `false` | 每 2 秒把状态/谱面信息写进日志，排查用 |
 | General | `DemoMode` | `false` | 在任意界面画一条**合成**下落谱面，用来预览/调样式，不必进关卡 |
@@ -315,12 +342,12 @@ AudioManager.Play("snd" + hitSound, AudioSettings.dspTime + 0.02, conductor.hitS
 | Layout | `JudgeLineY` | `0.18` | 判定线高度（屏高比例，0 = 底部） |
 | Layout | `NoteSpeed` | `620` | 下落速度（1080p 基准像素/秒） |
 | Layout | `NoteHeight` | `26` | 按键高度（1080p 基准像素） |
-| Layout | `LaneWidth` / `LaneGap` | `110` / `8` | 轨道宽度 / 间距（像素） |
+| Layout | `LaneWidth` / `LaneGap` | `70` / `8` | 八轨宽度 / 间距（像素） |
 | Layout | `RightToLeft` | `false` | 轨道从右往左排 |
-| Layout | `LaneMapping` | `Fingering` | 轨道映射：`Fingering`（内置人性化）/ `Macro`（文件里的宏按键计划）/ `Position`（按方块进入方向）/ `Cycle`（方块序号 %4）/ `Sequential`（顺序） |
+| Layout | `LaneMapping` | `Fingering` | `Fingering`（八轨手组）/ `Macro`（兼容别名）/ `Position`（进入方向）/ `Cycle`（方块序号 %8）/ `Sequential`（顺序） |
 | Chart | `FilePath` | 空 | .adofai 谱面文件路径（文件模式）；本机默认填了 `tmp\OfficialCharts\CE-TX Dramatic Entrance!.adofai` |
 | Chart | `FileOffsetSeconds` | `0` | 文件模式的时间微调（秒，正数 = 整体更晚） |
-| Chart | `FingeringWindowMs` | `180` | `Fingering` 的轮指/交替分界（毫秒），越低越轮指 |
+| Chart | `FingeringWindowMs` | `180` | 换手保护窗口（毫秒），上限为局部手组周期的四分之一 |
 | Layout | `NoteRotation` | `false` | 按键朝判定线倾斜（VSRG 观感） |
 | Style | `LaneOpacity` | `0.18` | 轨道底透明度（0 = 全透明） |
 | Style | `LaneEdgeAlpha` | `0.7` | 轨道边框透明度（轨道"看得见"主要靠它） |
@@ -343,7 +370,7 @@ AudioManager.Play("snd" + hitSound, AudioSettings.dspTime + 0.02, conductor.hitS
 |---|---|
 | 音符时间 | `scrFloor.entryTime` —— 星球进入该方块的**绝对歌曲秒数**，已包含 BPM、`SetSpeed`、`Pause`、`Hold` 等全部事件 |
 | 方块序号 | `scrFloor.seqID` |
-| 进入方向 | `scrFloor.entryangle`（弧度）→ `LaneMapping=Position` 时量化到 4 轨 |
+| 进入方向 | `scrFloor.entryangle`（弧度）→ `LaneMapping=Position` 时量化到 8 轨 |
 | 谱面列表 | `scrLevelMaker.instance.listFloors`（`List<scrFloor>`，`listFloors[i].seqID == i`） |
 | 当前歌曲时间 | `scrConductor.instance.songposition_minusi`（双精度秒） |
 | 是否在打歌 | `scrController.instance.currentState == States.PlayerControl` |
@@ -370,6 +397,20 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -InstallLoader -Install   # �
   ＋ `BepInEx\core` 下的 `BepInEx.dll`、`0Harmony.dll`
 - 产物：`build\AdoFalling.dll`，编译日志 `build\csc.log`
 
+可用 `-BepInExDir "路径\BepInEx"` 指定编译依赖；未指定时依次查找游戏目录、仓库
+`bepinex\BepInEx` 和 `build\dependencies\BepInEx`。仅编译不修改游戏安装目录。
+
+排键与读谱回归检查（不需要启动游戏）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\run.ps1
+# 若默认 Newtonsoft.Json 路径不存在，提供 .NET Framework 兼容版本：
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\run.ps1 -JsonDll "路径\Newtonsoft.Json.dll"
+```
+
+检查覆盖八分/十六分转换、二十四分/三十二分、连续与插入反拍、容量扩展、BPM 变速、
+长按键占用、文件时间轴、旧配置兼容，以及调参保留已命中状态。编译产物在 `build\tests`。
+
 > 本机没有 .NET SDK，所以用 csc 直接编译；`build.ps1` 内部路径全部由脚本自身位置推导，
 > 不会把中文路径经命令行传递（PS 5.1 会按 ANSI 误读）。
 
@@ -383,7 +424,8 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -InstallLoader -Install   # �
 | `GameState.cs` | 反射读取游戏状态（歌曲时间/BPM/状态） |
 | `GameClock.cs` | 显示时钟（每帧直读歌曲时间 + 平移）与判定事件钩子 |
 | `ChartReader.cs` | 读谱：过滤 auto/midspin/松手方块、同拍合并、长按时长 |
-| `FingeringPlanner.cs` | 人性化排键：移植 ReADOFAIMacro 的轮指/硬抗分指算法，把音符重新分配到 4 条轨道 |
+| `FingeringPlanner.cs` | 八轨手组排键：左右手组交替、外向内轮指、反拍相位与长按占用处理 |
+| `MacroPlan.cs` | 文件按键时间轴及逐音符局部 BPM，供统一排键器使用 |
 | `FallingEngine.cs` | 每帧推进音符、判定特效、时间回溯（存档点）重建 |
 | `FallingView.cs` | 屏幕几何：轨道位置、判定线高度 |
 | `OverlayRenderer.cs` | 用 IMGUI 绘制判定线/轨道/下落按键/长条/判定特效 |

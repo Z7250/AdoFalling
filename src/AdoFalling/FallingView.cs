@@ -9,7 +9,7 @@ namespace AdoFalling
     /// </summary>
     internal sealed class FallingView
     {
-        public const int LaneCount = 4;
+        public const int LaneCount = FingeringPlanner.LaneCount;
 
         /// <summary>Judgement line height from the bottom of the screen, in pixels.</summary>
         public float JudgeY { get; private set; }
@@ -59,9 +59,6 @@ namespace AdoFalling
             for (int i = 0; i < LaneCount; i++)
             {
                 int idx = c.MirrorDirection.Value ? (LaneCount - 1 - i) : i;
-                // Lane order 0/2 and 1/3 swapped, as requested: lane 0 is drawn where lane 2
-                // used to be, lane 1 where lane 3 was, and vice versa.
-                idx ^= 2;
                 _laneX[i] = x0 + idx * (_laneW + gap);
             }
             JudgeY = c.JudgeLineY.Value * h;

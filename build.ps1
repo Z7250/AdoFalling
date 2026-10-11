@@ -6,7 +6,8 @@
 param(
     [switch]$Install,
     [switch]$InstallLoader,
-    [string]$GameDir = "D:\steam\steamapps\common\A Dance of Fire and Ice"
+    [string]$GameDir = "D:\steam\steamapps\common\A Dance of Fire and Ice",
+    [string]$BepInExDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,10 +23,14 @@ $managed = Join-Path $GameDir "A Dance of Fire and Ice_Data\Managed"
 
 # BepInEx's runtime assemblies: the ones installed in the game win, so a build always uses
 # exactly what the game will load.
-$bepCore = Join-Path $GameDir "BepInEx\core"
-if (-not (Test-Path $bepCore))
+$bepCore = if ($BepInExDir) { Join-Path $BepInExDir "core" } else { Join-Path $GameDir "BepInEx\core" }
+if (-not $BepInExDir -and -not (Test-Path $bepCore))
 {
     $bepCore = Join-Path $here "bepinex\BepInEx\core"
+}
+if (-not $BepInExDir -and -not (Test-Path $bepCore))
+{
+    $bepCore = Join-Path $here "build\dependencies\BepInEx\core"
 }
 $ToolsDir = Join-Path $here "bepinex"
 
