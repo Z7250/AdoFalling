@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
     /// <summary>
     /// Converts ADOFAI's own chart into a falling-note timeline.
@@ -24,10 +24,16 @@ namespace AdoFalling
         private int _lastCount = -1;
         private int _loggedFor = -1;
         private bool _statusFromPlay;
-        private LaneMapping _lastMapping;
         private MacroPlan _lastPlan;
         private double _lastWindowMs;
+        private FingeringMode _lastFingeringMode;
+        private double _lastMinIntervalMs;
+        private double _lastChordWindowMs;
+        private double _lastFingeringBpm;
+        private bool _lastFollowSpeed;
+        private double _baseBeatSeconds;
         private string _fingering = "";
+        public string FingeringReference { get; private set; }
 
         /// <summary>_lastCount marker that means "these notes came from a chart file".</summary>
         private const int FileChartSentinel = -3;
@@ -83,6 +89,8 @@ namespace AdoFalling
             _notes.Clear();
             _lastCount = -1;
             _loggedFor = -1;
+            _baseBeatSeconds = 0.0;
+            FingeringReference = "";
         }
 
         /// <summary>
@@ -102,16 +110,29 @@ namespace AdoFalling
         {
             FallingConfig c = FallingPlugin.Cfg;
 
-            // Re-plan when the panel changes mapping/protection. Preserve consumed state
+            // Re-plan when the panel changes fingering protection. Preserve consumed state
             // and the timing anchor; tuning must not bring already-hit notes back.
-            if (c.LaneMapping.Value != _lastMapping || MacroPlan.Current != _lastPlan
-                || c.FingeringWindowMs.Value != _lastWindowMs)
+            if (MacroPlan.Current != _lastPlan
+                || c.FingeringMode.Value != _lastFingeringMode
+                || c.FingeringWindowMs.Value != _lastWindowMs
+                || c.FingeringMinIntervalMs.Value != _lastMinIntervalMs
+                || c.FingeringBpm.Value != _lastFingeringBpm || c.FingeringFollowSpeed.Value != _lastFollowSpeed)
             {
                 if (_notes.Count > 0)
                     ReassignLanes(c);
-                _lastMapping = c.LaneMapping.Value;
                 _lastPlan = MacroPlan.Current;
+                _lastFingeringMode = c.FingeringMode.Value;
                 _lastWindowMs = c.FingeringWindowMs.Value;
+                _lastMinIntervalMs = c.FingeringMinIntervalMs.Value;
+                _lastFingeringBpm = c.FingeringBpm.Value;
+                _lastFollowSpeed = c.FingeringFollowSpeed.Value;
+            }
+
+            // Changing visual recognition must never invoke the fingering allocator.
+            if (c.ChordWindowMs.Value != _lastChordWindowMs)
+            {
+                UpdateChordVisuals(c);
+                _lastChordWindowMs = c.ChordWindowMs.Value;
             }
 
             if (!st.Playing)
@@ -141,7 +162,7 @@ namespace AdoFalling
             {
                 if (_notes.Count > 0)
                     Reset();
-                Status = "file chart ready - press " + c.LoadKey.Value + " to start";
+                Status = "file chart ready - start from the panel";
                 return;
             }
 
@@ -178,6 +199,7 @@ namespace AdoFalling
             int releaseTiles = 0;
             double lastHitTime = double.NegativeInfinity;
             double baseBpm = st.Bpm > 0.0001 ? st.Bpm : 150.0;
+            _baseBeatSeconds = 60.0 / baseBpm;
 
             // Hold durations straight from the game's own timeline.
             //
@@ -190,7 +212,7 @@ namespace AdoFalling
             for (int k = 0; k < floors.Count; k++)
             {
                 object fk = floors[k];
-                entryTimes[k] = fk != null ? ToDouble(Read(fk, _floorEntryTime)) : 0.0;
+                entryTimes[k] = fk != null ? GameReflection.ToDouble(GameReflection.SafeRead(fk, _floorEntryTime)) : 0.0;
             }
 
             for (int i = 0; i < floors.Count; i++)
@@ -199,7 +221,7 @@ namespace AdoFalling
                 if (f == null)
                     continue;
 
-                bool fake = ToBool(Read(f, _floorIsFake));
+                bool fake = GameReflection.ToBool(GameReflection.SafeRead(f, _floorIsFake));
                 if (fake)
                     continue;
 
@@ -208,21 +230,20 @@ namespace AdoFalling
                 // they must not become notes of their own.
                 if (c.SkipAutoTiles.Value)
                 {
-                    if (ToBool(Read(f, _floorIsAuto)))
+                    if (GameReflection.ToBool(GameReflection.SafeRead(f, _floorIsAuto)))
                     {
                         skippedAuto++;
                         continue;
                     }
-                    if (ToBool(Read(f, _floorIsMidSpin)))
+                    if (GameReflection.ToBool(GameReflection.SafeRead(f, _floorIsMidSpin)))
                     {
                         skippedMidSpin++;
                         continue;
                     }
                 }
 
-                double t = ToDouble(Read(f, _floorEntryTime));
-                double ang = ToDouble(Read(f, _floorEntryAngle));
-                int seq = (int)ToDouble(Read(f, _floorSeqId));
+                double t = GameReflection.ToDouble(GameReflection.SafeRead(f, _floorEntryTime));
+                int seq = (int)GameReflection.ToDouble(GameReflection.SafeRead(f, _floorSeqId));
 
                 // The tile right after a hold is consumed by the hold's RELEASE judgement:
                 // scrPlayer.UpdateHoldBehavior calls Hit() on the hold tile itself when the key
@@ -235,9 +256,7 @@ namespace AdoFalling
                     continue;
                 }
 
-                // Tiles that share an entry time belong to the same beat: the planet lands on
-                // them from a single press, so emitting one note each would turn a single tap
-                // into an unintended double. Keep the first tile of the beat.
+                // Keep the first tile when one press accounts for multiple same-beat tiles.
                 if (c.MergeSameBeat.Value && _notes.Count > 0 && t - lastHitTime < c.SameBeatEpsilon.Value)
                 {
                     merged++;
@@ -247,9 +266,8 @@ namespace AdoFalling
 
                 NoteInstance n = default(NoteInstance);
                 n.HitTime = t;
-                double speed = ToDouble(Read(f, _floorSpeed));
+                double speed = GameReflection.ToDouble(GameReflection.SafeRead(f, _floorSpeed));
                 n.BeatSeconds = 60.0 / baseBpm / (speed > 0.0 ? speed : 1.0);
-                n.Lane = LaneFor(c, seq, ang, i);
                 n.DistancePx = 0f;
                 n.SeqId = seq;
                 n.HoldSeconds = HoldSecondsFor(f, i, floors, entryTimes, baseBpm);
@@ -261,9 +279,9 @@ namespace AdoFalling
                     {
                         double px = n.HoldSeconds * c.NoteSpeedPxPerSec.Value * (Screen.height / 1080f);
                         FallingPlugin.Log.LogInfo(string.Format(
-                            "hold seq={0} lane={1} entry={2:F3}s hold={3:F3}s ({4:F0}px) holdLength={5} speed={6}",
-                            seq, n.Lane, t, n.HoldSeconds, px,
-                            Read(f, _floorHoldLength), Read(f, _floorSpeed)));
+                            "hold seq={0} entry={1:F3}s hold={2:F3}s ({3:F0}px) holdLength={4} speed={5}",
+                            seq, t, n.HoldSeconds, px,
+                            GameReflection.SafeRead(f, _floorHoldLength), GameReflection.SafeRead(f, _floorSpeed)));
                     }
                 }
                 n.Color = c.NoteColorValue;
@@ -290,18 +308,31 @@ namespace AdoFalling
         /// <summary>Re-plan lanes without restoring consumed notes or changing the file anchor.</summary>
         private void ReassignLanes(FallingConfig c)
         {
-            if (c.LaneMapping.Value == LaneMapping.Fingering || c.LaneMapping.Value == LaneMapping.Macro)
-                _fingering = FingeringPlanner.Assign(_notes, c.FingeringWindowMs.Value);
-            else
+            // ADOFAI authors also use SetSpeed to encode subdivisions of a steady song:
+            // e.g. 180 BPM music with 360/720 BPM tiles. Those are not musical tempo changes.
+            // Keep actual local tempo in NoteInstance for timing, but use the song's pulse
+            // for hands unless the user explicitly chooses local tempo or a reference BPM.
+            double referenceBeat = c.FingeringBpm.Value > 0.0 ? 60.0 / c.FingeringBpm.Value
+                : c.FingeringFollowSpeed.Value ? 0.0 : _baseBeatSeconds;
+            double minimum = FingeringPlanner.MinGroupIntervalSeconds(c.FingeringMinIntervalMs.Value);
+            FingeringReference = referenceBeat > 0.0
+                ? (60.0 / Math.Max(referenceBeat, minimum * 2.0)).ToString("0.##") + " BPM"
+                : minimum > 0.0 ? "局部 BPM（最高 " + (30.0 / minimum).ToString("0.##") + "）" : "谱面局部 BPM";
+            if (c.FingeringMode.Value == FingeringMode.FourKey) FingeringReference += " · 密集段按原 BPM";
+            _fingering = "reference " + FingeringReference + ", "
+                + FingeringPlanner.Assign(_notes, c.FingeringWindowMs.Value, referenceBeat,
+                    c.FingeringMinIntervalMs.Value, c.FingeringMode.Value);
+            UpdateChordVisuals(c);
+        }
+
+        private void UpdateChordVisuals(FallingConfig c)
+        {
+            ChordVisuals.Mark(_notes, c.ChordWindowMs.Value);
+            for (int i = 0; i < _notes.Count; i++)
             {
-                _fingering = "";
-                for (int i = 0; i < _notes.Count; i++)
-                {
-                    NoteInstance n = _notes[i];
-                    double angle = n.Floor != null ? ToDouble(Read(n.Floor, _floorEntryAngle)) : 0.0;
-                    n.Lane = LaneFor(c, n.SeqId, angle, i);
-                    _notes[i] = n;
-                }
+                NoteInstance n = _notes[i];
+                n.Color = c.NoteColorFor(n);
+                _notes[i] = n;
             }
         }
 
@@ -314,6 +345,7 @@ namespace AdoFalling
             _lastCount = -2;
             FallingConfig c = FallingPlugin.Cfg;
             double beat = st.Crotchet > 0.0001 ? st.Crotchet : 0.4;
+            _baseBeatSeconds = beat;
             for (int i = 0; i < 400; i++)
             {
                 NoteInstance n = default(NoteInstance);
@@ -354,13 +386,13 @@ namespace AdoFalling
             FallingConfig c = FallingPlugin.Cfg;
 
             // A rewind means the level restarted: re-anchor to the current song time so the
-            // aid still runs (press the load key again for an exact start).
+            // aid still runs (start the file from the panel again for an exact start).
             double anchor = MacroPlan.AnchorSongTime;
             if (st.SongPosition < anchor - 1.0)
             {
                 MacroPlan.AnchorSongTime = anchor = st.SongPosition;
                 FallingPlugin.Log.LogInfo(string.Format(
-                    "file chart: song rewound - re-anchored at {0:F3}s (press the load key for an exact start)",
+                    "file chart: song rewound - re-anchored at {0:F3}s (restart from the panel for an exact start)",
                     anchor));
             }
 
@@ -369,6 +401,7 @@ namespace AdoFalling
 
             Reset();
             _lastCount = FileChartSentinel;
+            _baseBeatSeconds = 60.0 / plan.LevelBpm;
 
             double offset = c.FileOffsetSeconds.Value;
             for (int k = 0; k < plan.PressCount; k++)
@@ -397,7 +430,7 @@ namespace AdoFalling
             IList liveFloors = GetFloors();
             if (liveFloors != null && liveFloors.Count > 1)
             {
-                double liveFirst = ToDouble(Read(liveFloors[1], _floorEntryTime));
+                double liveFirst = GameReflection.ToDouble(GameReflection.SafeRead(liveFloors[1], _floorEntryTime));
                 FallingPlugin.Log.LogInfo(string.Format(
                     "file chart sync check: live tile 1 at {0:F3}s, file anchor {1:F3}s (diff {2:+0.000;-0.000}s)",
                     liveFirst, anchor, liveFirst - anchor));
@@ -417,7 +450,7 @@ namespace AdoFalling
                 return false;
             try
             {
-                object v = Read(prev, _floorHoldLength);
+                object v = GameReflection.SafeRead(prev, _floorHoldLength);
                 return v != null && Convert.ToInt32(v) >= 0;
             }
             catch
@@ -435,21 +468,13 @@ namespace AdoFalling
                 return -1.0;
             try
             {
-                object v = Read(floor, _floorHoldCompletion);
+                object v = GameReflection.SafeRead(floor, _floorHoldCompletion);
                 return v != null ? Convert.ToDouble(v) : -1.0;
             }
             catch
             {
                 return -1.0;
             }
-        }
-
-        /// <summary>Lane index for a tile, exposed so hit effects land on the same lane.</summary>
-        internal static int LaneForSeq(int seq, double angleRad)
-        {
-            if (seq < 0)
-                return 0;
-            return LaneFor(FallingPlugin.Cfg, seq, angleRad, seq);
         }
 
         /// <summary>Find the note belonging to a chart tile.</summary>
@@ -507,11 +532,11 @@ namespace AdoFalling
             if (_floorHoldLength == null)
                 return 0.0;
 
-            int hold = (int)ToDouble(Read(floor, _floorHoldLength));
+            int hold = (int)GameReflection.ToDouble(GameReflection.SafeRead(floor, _floorHoldLength));
             if (hold < 0)
                 return 0.0;          // -1 is "no hold"; 0 is a legal single-step hold
 
-            double speed = ToDouble(Read(floor, _floorSpeed));
+            double speed = GameReflection.ToDouble(GameReflection.SafeRead(floor, _floorSpeed));
             if (speed <= 0.0)
                 speed = 1.0;
 
@@ -541,8 +566,8 @@ namespace AdoFalling
             if (hold <= 0)
                 return 0.0;
 
-            double entry = ToDouble(Read(floor, _floorEntryAngle));
-            double exit = ToDouble(Read(floor, _floorExitAngle));
+            double entry = GameReflection.ToDouble(GameReflection.SafeRead(floor, _floorEntryAngle));
+            double exit = GameReflection.ToDouble(GameReflection.SafeRead(floor, _floorExitAngle));
             double fwd = TimeBetweenAngles(0.0, 3.1415927410125732, speed, bpm, true);
             double back = TimeBetweenAngles(0.0, 3.1415927410125732, speed, bpm, false);
             double halfTurn = 0.5 * (fwd + back);
@@ -572,37 +597,17 @@ namespace AdoFalling
             return r;
         }
 
-        private static int LaneFor(FallingConfig c, int seq, double angleRad, int index)
-        {
-            switch (c.LaneMapping.Value)
-            {
-                case LaneMapping.Cycle:
-                    return ((seq % FallingView.LaneCount) + FallingView.LaneCount) % FallingView.LaneCount;
-                case LaneMapping.Position:
-                    {
-                        // Quantise the entry direction into eight equal sectors; ADOFAI's
-                        // angle 0 points right and angles grow counter-clockwise.
-                        double deg = angleRad * 57.29577951308232;
-                        int q = (int)Math.Round(deg / (360.0 / FallingView.LaneCount));
-                        q = ((q % FallingView.LaneCount) + FallingView.LaneCount) % FallingView.LaneCount;
-                        return FallingView.LaneCount - 1 - q;
-                    }
-                default:
-                    return ((index % FallingView.LaneCount) + FallingView.LaneCount) % FallingView.LaneCount;
-            }
-        }
-
         private IList GetFloors()
         {
             if (!_probed)
                 Probe();
-            object lm = Resolve(_levelMakerInstance);
+            object lm = GameReflection.Resolve(_levelMakerInstance);
             if (lm == null)
             {
                 _lastDiag = "LevelMaker.instance null";
                 return null;
             }
-            object raw = Read(lm, _listFloors);
+            object raw = GameReflection.SafeRead(lm, _listFloors);
             if (raw == null)
             {
                 _lastDiag = "listFloors." + Name(_listFloors) + " returned null";
@@ -626,41 +631,36 @@ namespace AdoFalling
         private static void Probe()
         {
             _probed = true;
-            Assembly asm = FindGameAssembly();
+            Assembly asm = GameReflection.Assembly;
             if (asm == null)
             {
                 FallingPlugin.Log.LogError("Assembly-CSharp not loaded; cannot read the chart");
                 return;
             }
 
-            Type lmType = GameState.FindType(asm, "scrLevelMaker", "LevelMaker");
-            Type floorType = GameState.FindType(asm, "scrFloor", "Floor");
-            const BindingFlags F = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+            Type lmType = GameReflection.FindType(asm, "scrLevelMaker", "LevelMaker");
+            Type floorType = GameReflection.FindType(asm, "scrFloor", "Floor");
 
             if (lmType != null)
             {
-                PropertyInfo p = lmType.GetProperty("instance", F);
-                if (p != null)
-                    _levelMakerInstance = p;
-                else
-                    _levelMakerInstance = lmType.GetField("instance", F);
-                _listFloors = GameState.FindMember(lmType, "listFloors", "floors");
+                _levelMakerInstance = GameReflection.FindMember(lmType, "instance");
+                _listFloors = GameReflection.FindMember(lmType, "listFloors", "floors");
             }
 
             if (floorType != null)
             {
-                _floorSeqId = GameState.FindMember(floorType, "seqID");
-                _floorEntryTime = GameState.FindMember(floorType, "entryTime");
-                _floorEntryAngle = GameState.FindMember(floorType, "entryangle", "entryAngle");
-                _floorHoldLength = GameState.FindMember(floorType, "holdLength");
-                _floorIsFake = GameState.FindMember(floorType, "isFake");
-                _floorIsAuto = GameState.FindMember(floorType, "auto");
-                _floorIsMidSpin = GameState.FindMember(floorType, "midSpin");
-                _floorExitAngle = GameState.FindMember(floorType, "exitangle", "exitAngle");
-                _floorSpeed = GameState.FindMember(floorType, "speed");
-                _floorIsCcw = GameState.FindMember(floorType, "isCCW");
-                _floorNumPlanets = GameState.FindMember(floorType, "numPlanets");
-                _floorHoldCompletion = GameState.FindMember(floorType, "holdCompletion");
+                _floorSeqId = GameReflection.FindMember(floorType, "seqID");
+                _floorEntryTime = GameReflection.FindMember(floorType, "entryTime");
+                _floorEntryAngle = GameReflection.FindMember(floorType, "entryangle", "entryAngle");
+                _floorHoldLength = GameReflection.FindMember(floorType, "holdLength");
+                _floorIsFake = GameReflection.FindMember(floorType, "isFake");
+                _floorIsAuto = GameReflection.FindMember(floorType, "auto");
+                _floorIsMidSpin = GameReflection.FindMember(floorType, "midSpin");
+                _floorExitAngle = GameReflection.FindMember(floorType, "exitangle", "exitAngle");
+                _floorSpeed = GameReflection.FindMember(floorType, "speed");
+                _floorIsCcw = GameReflection.FindMember(floorType, "isCCW");
+                _floorNumPlanets = GameReflection.FindMember(floorType, "numPlanets");
+                _floorHoldCompletion = GameReflection.FindMember(floorType, "holdCompletion");
             }
 
             FallingPlugin.Log.LogInfo(string.Format(
@@ -672,72 +672,6 @@ namespace AdoFalling
                 _floorSeqId != null ? _floorSeqId.Name : "MISSING"));
         }
 
-        private static Assembly FindGameAssembly()
-        {
-            foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies())
-                if (a.GetName().Name == "Assembly-CSharp")
-                    return a;
-            return null;
-        }
-
-        private static object Resolve(MemberInfo m)
-        {
-            if (m == null)
-                return null;
-            try
-            {
-                PropertyInfo p = m as PropertyInfo;
-                if (p != null)
-                    return p.GetValue(null, null);
-                FieldInfo f = m as FieldInfo;
-                return f != null ? f.GetValue(null) : null;
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static object Read(object target, MemberInfo m)
-        {
-            try
-            {
-                return GameState.Read(target, m);
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static double ToDouble(object o)
-        {
-            if (o == null)
-                return 0.0;
-            try { return Convert.ToDouble(o); }
-            catch { return 0.0; }
-        }
-
-        private static bool ToBool(object o)
-        {
-            if (o == null)
-                return false;
-            try { return Convert.ToBoolean(o); }
-            catch { return false; }
-        }
     }
 
-    internal enum LaneMapping
-    {
-        Sequential,
-        Cycle,
-        Position,
-
-        /// <summary>Alternating hand groups, with outside-to-index rolls on eight lanes.</summary>
-        Fingering,
-
-        /// <summary>Legacy config value; uses the same hand-group allocator as Fingering.
-        /// A loaded file supplies timing, not a separate lane algorithm.</summary>
-        Macro
-    }
 }

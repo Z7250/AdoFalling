@@ -6,7 +6,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
     internal interface ISetting
     {
@@ -17,7 +17,10 @@ namespace AdoFalling
     internal sealed class Setting<T> : ISetting
     {
         public T Value { get; set; }
-        public Setting(T value) { Value = value; }
+        public readonly T Default;
+        public Setting(T value) : this(value, value) { }
+        public Setting(T value, T fallback) { Value = value; Default = fallback; }
+        public void Reset() { Value = Default; }
 
         public JToken Serialize()
         {
@@ -100,9 +103,18 @@ namespace AdoFalling
                     Warn("Invalid setting " + section + "/" + key + "; using default: " + ex.Message);
                 }
             }
-            var entry = new Setting<T>(value);
+            var entry = new Setting<T>(value, fallback);
             entries.Add(key, entry);
             return entry;
+        }
+
+        /// <summary>Discard an obsolete option without removing unrelated saved settings.</summary>
+        public void Remove(string section, string key)
+        {
+            JObject group = _data[section] as JObject;
+            if (group != null) group.Remove(key);
+            Dictionary<string, ISetting> entries;
+            if (_entries.TryGetValue(section, out entries)) entries.Remove(key);
         }
 
         public void Save()

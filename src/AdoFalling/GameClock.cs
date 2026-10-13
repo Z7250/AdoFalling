@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
     /// <summary>
     /// Tracks the song clock and the game's own hit events.
@@ -176,14 +176,14 @@ namespace AdoFalling
             _probeDone = true;
             try
             {
-                Assembly asm = GameAssembly();
+                Assembly asm = GameReflection.Assembly;
                 if (asm == null)
                 {
                     _probeFailed = true;
                     return;
                 }
 
-                Type playerType = GameState.FindType(asm, "scrPlayer");
+                Type playerType = GameReflection.FindType(asm, "scrPlayer");
                 if (playerType == null)
                 {
                     _probeFailed = true;
@@ -272,25 +272,25 @@ namespace AdoFalling
         {
             try
             {
-                Assembly asm = GameAssembly();
+                Assembly asm = GameReflection.Assembly;
                 if (asm == null)
                     return null;
 
-                Type mgr = GameState.FindType(asm, "scrPlayerManager");
+                Type mgr = GameReflection.FindType(asm, "scrPlayerManager");
                 if (mgr != null)
                 {
-                    object inst = ReadStatic(mgr, "playerManager") ?? ReadStatic(mgr, "instance");
-                    object players = GameState.Read(inst, GameState.FindMember(mgr, "players"));
+                    object inst = GameReflection.ReadStatic(mgr, "playerManager") ?? GameReflection.ReadStatic(mgr, "instance");
+                    object players = GameReflection.Read(inst, GameReflection.FindMember(mgr, "players"));
                     var list = players as System.Collections.IList;
                     if (list != null && list.Count > 0)
                         return list[0];
                 }
 
-                Type ctrl = GameState.FindType(asm, "scrController");
+                Type ctrl = GameReflection.FindType(asm, "scrController");
                 if (ctrl != null)
                 {
-                    object c = ReadStatic(ctrl, "instance");
-                    object p = GameState.Read(c, GameState.FindMember(ctrl, "playerOne"));
+                    object c = GameReflection.ReadStatic(ctrl, "instance");
+                    object p = GameReflection.Read(c, GameReflection.FindMember(ctrl, "playerOne"));
                     if (p != null && playerType.IsInstanceOfType(p))
                         return p;
                 }
@@ -302,16 +302,6 @@ namespace AdoFalling
             return null;
         }
 
-        private static object ReadStatic(Type t, string name)
-        {
-            const BindingFlags F = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
-            PropertyInfo p = t.GetProperty(name, F);
-            if (p != null)
-                return p.GetValue(null, null);
-            FieldInfo f = t.GetField(name, F);
-            return f != null ? f.GetValue(null) : null;
-        }
-
         private void HandleHitFloor(object floor)
         {
             int seq = -1;
@@ -319,15 +309,15 @@ namespace AdoFalling
             string grade = null;
             try
             {
-                Assembly asm = GameAssembly();
+                Assembly asm = GameReflection.Assembly;
                 if (asm != null && floor != null)
                 {
-                    Type ft = GameState.FindType(asm, "scrFloor");
+                    Type ft = GameReflection.FindType(asm, "scrFloor");
                     if (ft != null)
                     {
-                        object seqObj = GameState.Read(floor, GameState.FindMember(ft, "seqID"));
-                        object angObj = GameState.Read(floor, GameState.FindMember(ft, "entryangle", "entryAngle"));
-                        object gradeObj = GameState.Read(floor, GameState.FindMember(ft, "grade"));
+                        object seqObj = GameReflection.Read(floor, GameReflection.FindMember(ft, "seqID"));
+                        object angObj = GameReflection.Read(floor, GameReflection.FindMember(ft, "entryangle", "entryAngle"));
+                        object gradeObj = GameReflection.Read(floor, GameReflection.FindMember(ft, "grade"));
                         if (seqObj != null)
                             seq = Convert.ToInt32(seqObj);
                         if (angObj != null)
@@ -376,14 +366,6 @@ namespace AdoFalling
         public double LastHitAngle { get; private set; }
         public string LastHitGrade { get; private set; }
         public bool LastHitValid { get; private set; }
-
-        private static Assembly GameAssembly()
-        {
-            foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies())
-                if (a.GetName().Name == "Assembly-CSharp")
-                    return a;
-            return null;
-        }
 
         /// <summary>True when the game's own hit callback is wired up.</summary>
         public bool HitHookAttached { get { return !_probeFailed && _onHitField != null && _boundPlayer != null; } }

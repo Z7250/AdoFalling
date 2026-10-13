@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
     /// <summary>A short-lived burst drawn at the judgement line when a tile is hit.</summary>
     internal struct HitEffect
@@ -60,6 +60,7 @@ namespace AdoFalling
 
         /// <summary>Notes on screen right now; read by the renderer during OnGUI.</summary>
         public List<NoteInstance> Visible { get { return _visible; } }
+        public string FingeringReference { get { return _chart.FingeringReference; } }
         public List<HitEffect> Effects { get { return _effects; } }
 
         public float JudgeFlash { get { return _judgeFlash; } }
@@ -171,10 +172,6 @@ namespace AdoFalling
             }
 
             // Run-up: shift the display clock back so the chart's first note starts at the top
-            // edge of the screen. Recomputed until the level is really running, because the
-            // chart only becomes readable part-way through the countdown; after that the offset
-            // is frozen so the timeline does not move under the player.
-            // Run-up: shift the display clock back so the chart's first note starts at the top
             // edge of the screen. Applied once per play attempt, and NOT gated on the level
             // having started: the chart can become readable only after gameplay begins, and
             // that is exactly the case where the player otherwise gets no reaction time at all.
@@ -207,7 +204,10 @@ namespace AdoFalling
                 if (n.Consumed)
                     continue;               // already finished: it disappears at the line
 
-                double lead = n.HitTime - now;
+                // Resolve every frame so palette edits update taps and hold bodies immediately.
+                n.Color = _cfg.NoteColorFor(n);
+
+                double lead = n.DisplayHitTime - now;
 
                 if (n.HoldSeconds > 0.0)
                 {
@@ -231,7 +231,9 @@ namespace AdoFalling
                     // the bar always grows out of the judgement line.
                     if (now > end + 0.05)
                         continue;           // released: remove it
-                    double goal = now > n.HitTime ? end : n.HitTime;
+                    // Enter the held phase at the original press time and retain its
+                    // original release/lifetime while aligning the falling head visually.
+                    double goal = now > n.HitTime ? n.DisplayHitTime + n.HoldSeconds : n.DisplayHitTime;
                     n.DistancePx = (float)((goal - now) * pxPerSec);
                     n.Active = true;
                     _visible.Add(n);
@@ -254,7 +256,7 @@ namespace AdoFalling
                 {
                     if (Math.Abs(_visible[i].DistancePx) < pxPerSec * dt * 1.5f)
                     {
-                        SpawnEffect(_visible[i].Lane, "HIT", _cfg.NoteColorValue);
+                        SpawnEffect(_visible[i].Lane, "HIT", _visible[i].Color);
                         break;
                     }
                 }
@@ -269,7 +271,6 @@ namespace AdoFalling
                 if (_demoHitTimer >= _demoHitInterval)
                 {
                     _demoHitTimer = 0f;
-                    int lane = FindLaneCrossingLine(pxPerSec);
                     int seq = NextDemoSeq(clock);
                     clock.RegisterSyntheticHit(seq, 0.0, "Perfect");
                     ApplyHit(clock);
@@ -355,16 +356,13 @@ namespace AdoFalling
 
         // --- runtime alignment tuning (F5 panel) ------------------------------
 
-        private float _cachedFallTime;
-        private double _cachedFirst;
 
         /// <summary>Re-apply the offset from the current config; used while tuning.</summary>
         public void RecomputeLead(GameClock clock, double firstHitTime)
         {
-            _cachedFirst = firstHitTime;
-            _cachedFallTime = (float)(_view.FallDistance /
+            float fallTime = (float)(_view.FallDistance /
                 Mathf.Max(1f, _cfg.NoteSpeedPxPerSec.Value * (Screen.height / 1080f)));
-            clock.SetLead(firstHitTime, _cachedFallTime, _cfg.LeadInSeconds.Value,
+            clock.SetLead(firstHitTime, fallTime, _cfg.LeadInSeconds.Value,
                 _cfg.LeadFraction.Value, _cfg.LeadOffsetManual.Value);
         }
 
@@ -388,14 +386,10 @@ namespace AdoFalling
             _lastJudgeOffsetPx = 0f;
         }
 
-        public double ManualTrim { get { return _cfg.LeadOffsetManual.Value; } }
-        public double LeadFraction { get { return _cfg.LeadFraction.Value; } }
-        public double HoldTrim { get { return _cfg.HoldOffsetSeconds.Value; } }
-        public double HoldScale { get { return _cfg.HoldScale.Value; } }
 
         /// <summary>
         /// Lane of the tile just hit: from the chart note when the sequence id is known,
-        /// otherwise derived from the tile's entry direction.
+        /// otherwise from the nearest visible note in the fixed eight-key layout.
         /// </summary>
         private int ResolveHitLane(GameClock clock, out NoteInstance note)
         {
@@ -409,11 +403,11 @@ namespace AdoFalling
                     return found.Lane;
                 }
             }
-            return ChartReader.LaneForSeq(clock.HitSeqId, clock.HitAngle);
+            return FindLaneCrossingLine();
         }
 
         /// <summary>Lane whose closest note is currently at the judgement line.</summary>
-        private int FindLaneCrossingLine(float pxPerSec)
+        private int FindLaneCrossingLine()
         {
             int bestLane = 0;
             double best = double.MaxValue;

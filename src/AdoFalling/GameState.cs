@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
     /// <summary>
     /// Read-only adapter over the game's own singletons, using the members verified in
@@ -61,24 +61,24 @@ namespace AdoFalling
 
             try
             {
-                object cond = Resolve(_conductorInstance);
+                object cond = GameReflection.Resolve(_conductorInstance);
                 if (cond != null)
                 {
-                    st.SongPosition = ToDouble(Read(cond, _songPosition));
-                    st.Bpm = ToDouble(Read(cond, _bpm));
-                    st.Crotchet = ToDouble(Read(cond, _crotchet));
+                    st.SongPosition = GameReflection.ToDouble(GameReflection.Read(cond, _songPosition));
+                    st.Bpm = GameReflection.ToDouble(GameReflection.Read(cond, _bpm));
+                    st.Crotchet = GameReflection.ToDouble(GameReflection.Read(cond, _crotchet));
                     if (st.Crotchet <= 0.0001 && st.Bpm > 0.0001)
                         st.Crotchet = 60.0 / st.Bpm;
                 }
 
-                object ctrl = Resolve(_controllerInstance);
+                object ctrl = GameReflection.Resolve(_controllerInstance);
                 if (ctrl != null)
                 {
-                    object stateObj = Read(ctrl, _currentState);
+                    object stateObj = GameReflection.Read(ctrl, _currentState);
                     st.StateName = stateObj != null ? stateObj.ToString() : "";
-                    st.Paused = ToBool(Read(ctrl, _paused));
-                    st.SeqId = (int)ToDouble(Read(ctrl, _currentSeqId));
-                    st.FloorId = (int)ToDouble(Read(ctrl, _currentFloorId));
+                    st.Paused = GameReflection.ToBool(GameReflection.Read(ctrl, _paused));
+                    st.SeqId = (int)GameReflection.ToDouble(GameReflection.Read(ctrl, _currentSeqId));
+                    st.FloorId = (int)GameReflection.ToDouble(GameReflection.Read(ctrl, _currentFloorId));
                     st.Playing = st.StateName == "PlayerControl" && !st.Paused;
 
                     // The chart is built while the level scene loads, well before the player
@@ -111,47 +111,29 @@ namespace AdoFalling
                 if (!_lmProbed)
                 {
                     _lmProbed = true;
-                    Assembly asm = GameAssembly();
-                    Type lm = asm != null ? FindType(asm, "scrLevelMaker", "LevelMaker") : null;
+                    Assembly asm = GameReflection.Assembly;
+                    Type lm = asm != null ? GameReflection.FindType(asm, "scrLevelMaker", "LevelMaker") : null;
                     if (lm != null)
                     {
-                        _lmInstance = FindMember(lm, "instance");
-                        _lmFloors = FindMember(lm, "listFloors", "floors");
+                        _lmInstance = GameReflection.FindMember(lm, "instance");
+                        _lmFloors = GameReflection.FindMember(lm, "listFloors", "floors");
                     }
                 }
 
-                object maker = Read(null, _lmInstance);
+                object maker = GameReflection.Read(null, _lmInstance);
                 UnityEngine.Object unityObj = maker as UnityEngine.Object;
                 if (unityObj != null && unityObj == null)
                     return false;                       // destroyed between scenes
                 if (maker == null)
                     return false;
 
-                var list = Read(maker, _lmFloors) as System.Collections.ICollection;
+                var list = GameReflection.Read(maker, _lmFloors) as System.Collections.ICollection;
                 return list != null && list.Count > 0;
             }
             catch
             {
                 return false;
             }
-        }
-
-        private static Assembly _gameAssembly;
-
-        /// <summary>Cached lookup of Assembly-CSharp; this runs every frame.</summary>
-        private static Assembly GameAssembly()
-        {
-            if (_gameAssembly != null)
-                return _gameAssembly;
-            foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                if (a.GetName().Name == "Assembly-CSharp")
-                {
-                    _gameAssembly = a;
-                    return a;
-                }
-            }
-            return null;
         }
 
         /// <summary>
@@ -174,14 +156,14 @@ namespace AdoFalling
 
             try
             {
-                object cond = Resolve(_conductorInstance);
+                object cond = GameReflection.Resolve(_conductorInstance);
                 if (cond == null)
                     return false;
-                songPosition = ToDouble(Read(cond, _songPosition));
+                songPosition = GameReflection.ToDouble(GameReflection.Read(cond, _songPosition));
 
-                object stateObj = Read(Resolve(_controllerInstance), _currentState);
+                object stateObj = GameReflection.Read(GameReflection.Resolve(_controllerInstance), _currentState);
                 string stateName = stateObj != null ? stateObj.ToString() : "";
-                playing = stateName == "PlayerControl" && !ToBool(Read(Resolve(_controllerInstance), _paused));
+                playing = stateName == "PlayerControl" && !GameReflection.ToBool(GameReflection.Read(GameReflection.Resolve(_controllerInstance), _paused));
                 inLevel = playing || stateName == "Start" || stateName == "Countdown"
                        || stateName == "Checkpoint" || LevelMakerExists();
                 return true;
@@ -192,17 +174,10 @@ namespace AdoFalling
             }
         }
 
-        private static void Probe()        {
+        private static void Probe()
+        {
             _probed = true;
-            Assembly asm = null;
-            foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                if (a.GetName().Name == "Assembly-CSharp")
-                {
-                    asm = a;
-                    break;
-                }
-            }
+            Assembly asm = GameReflection.Assembly;
             if (asm == null)
             {
                 _failed = true;
@@ -210,24 +185,24 @@ namespace AdoFalling
                 return;
             }
 
-            Type condType = FindType(asm, "scrConductor");
-            Type ctrlType = FindType(asm, "scrController");
+            Type condType = GameReflection.FindType(asm, "scrConductor");
+            Type ctrlType = GameReflection.FindType(asm, "scrController");
 
             if (condType != null)
             {
-                _conductorInstance = FindStatic(condType, "instance");
-                _songPosition = FindMember(condType, "songposition_minusi", "songposition_minusv", "songposition");
-                _bpm = FindMember(condType, "bpm");
-                _crotchet = FindMember(condType, "crotchetAtStart");
+                _conductorInstance = GameReflection.FindStatic(condType, "instance");
+                _songPosition = GameReflection.FindMember(condType, "songposition_minusi", "songposition_minusv", "songposition");
+                _bpm = GameReflection.FindMember(condType, "bpm");
+                _crotchet = GameReflection.FindMember(condType, "crotchetAtStart");
             }
 
             if (ctrlType != null)
             {
-                _controllerInstance = FindStatic(ctrlType, "instance");
-                _currentState = FindMember(ctrlType, "currentState");
-                _paused = FindMember(ctrlType, "paused");
-                _currentSeqId = FindMember(ctrlType, "currentSeqID");
-                _currentFloorId = FindMember(ctrlType, "currentFloorID");
+                _controllerInstance = GameReflection.FindStatic(ctrlType, "instance");
+                _currentState = GameReflection.FindMember(ctrlType, "currentState");
+                _paused = GameReflection.FindMember(ctrlType, "paused");
+                _currentSeqId = GameReflection.FindMember(ctrlType, "currentSeqID");
+                _currentFloorId = GameReflection.FindMember(ctrlType, "currentFloorID");
             }
 
             FallingPlugin.Log.LogInfo(string.Format(
@@ -246,88 +221,5 @@ namespace AdoFalling
             return m == null ? "MISSING" : m.Name;
         }
 
-        internal static Type FindType(Assembly asm, params string[] names)
-        {
-            foreach (Type t in asm.GetTypes())
-                foreach (string n in names)
-                    if (t.Name == n)
-                        return t;
-            return null;
-        }
-
-        internal static MemberInfo FindMember(Type t, params string[] names)
-        {
-            const BindingFlags F = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
-            foreach (string n in names)
-            {
-                PropertyInfo p = t.GetProperty(n, F);
-                if (p != null && p.CanRead)
-                    return p;
-                FieldInfo f = t.GetField(n, F);
-                if (f != null)
-                    return f;
-            }
-            return null;
-        }
-
-        private static MemberInfo FindStatic(Type t, string name)
-        {
-            const BindingFlags F = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
-            PropertyInfo p = t.GetProperty(name, F);
-            if (p != null)
-                return p;
-            return t.GetField(name, F);
-        }
-
-        internal static object Read(object target, MemberInfo m)
-        {
-            if (target == null || m == null)
-                return null;
-            PropertyInfo p = m as PropertyInfo;
-            if (p != null && p.CanRead)
-                return p.GetValue(target, null);
-            FieldInfo f = m as FieldInfo;
-            return f != null ? f.GetValue(target) : null;
-        }
-
-        private static object Resolve(MemberInfo m)
-        {
-            if (m == null)
-                return null;
-            try
-            {
-                PropertyInfo p = m as PropertyInfo;
-                if (p != null)
-                    return p.GetValue(null, null);
-                FieldInfo f = m as FieldInfo;
-                return f != null ? f.GetValue(null) : null;
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static double ToDouble(object o)
-        {
-            if (o == null)
-                return 0.0;
-            if (o is double) return (double)o;
-            if (o is float) return (float)o;
-            if (o is int) return (int)o;
-            if (o is long) return (long)o;
-            try { return Convert.ToDouble(o); }
-            catch { return 0.0; }
-        }
-
-        private static bool ToBool(object o)
-        {
-            if (o == null)
-                return false;
-            if (o is bool)
-                return (bool)o;
-            try { return Convert.ToBoolean(o); }
-            catch { return false; }
-        }
     }
 }

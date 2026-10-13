@@ -1,7 +1,7 @@
 using System;
 using System.Reflection;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
     /// <summary>
     /// Drives the game's own auto-play flag (RDC.auto) so a level plays itself.
@@ -36,8 +36,7 @@ namespace AdoFalling
             if (_auto == null) return;
             if (!_applied)
             {
-                PropertyInfo property = _auto as PropertyInfo;
-                object value = property != null ? property.GetValue(null, null) : ((FieldInfo)_auto).GetValue(null);
+                object value = GameReflection.Read(null, _auto);
                 _previousValue = Convert.ToBoolean(value);
             }
 
@@ -52,15 +51,13 @@ namespace AdoFalling
         {
             try
             {
-                Assembly asm = null;
-                foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies())
-                    if (a.GetName().Name == "Assembly-CSharp") { asm = a; break; }
-                Type t = asm != null ? GameState.FindType(asm, "RDC") : null;
+                Assembly asm = GameReflection.Assembly;
+                Type t = asm != null ? GameReflection.FindType(asm, "RDC") : null;
                 if (t == null)
                 {
                     return;
                 }
-                _auto = GameState.FindMember(t, "auto");
+                _auto = GameReflection.FindMember(t, "auto");
             }
             catch
             {
@@ -74,18 +71,7 @@ namespace AdoFalling
                 return false;
             try
             {
-                PropertyInfo p = _auto as PropertyInfo;
-                if (p != null && p.CanWrite)
-                {
-                    p.SetValue(null, value, null);
-                    return true;
-                }
-                FieldInfo f = _auto as FieldInfo;
-                if (f != null)
-                {
-                    f.SetValue(null, value);
-                    return true;
-                }
+                return GameReflection.Write(null, _auto, value);
             }
             catch (Exception ex)
             {

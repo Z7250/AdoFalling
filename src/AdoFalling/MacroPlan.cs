@@ -2,11 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Reflection;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json.Linq;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
     /// <summary>
     /// File chart timing adapted from ReADOFAIMacro: rotation angles -> Twirl / Pause /
@@ -99,8 +98,6 @@ namespace AdoFalling
 
         private static MacroPlan Parse(string path)
         {
-            EnsureJsonAssembly();
-
             string text = File.ReadAllText(path);
             text = Regex.Replace(text, @",\s*([}\]])", "$1");
             JObject root = JObject.Parse(text);
@@ -116,16 +113,11 @@ namespace AdoFalling
 
             List<double> rot = ComputeRotationAngles(angleData);
 
-            List<string> actionTypes = new List<string>();
-            List<int> actionFloors = new List<int>();
-            List<double> actionA = new List<double>();
-            List<double> actionB = new List<double>();
-            ReadActions(root, actionTypes, actionFloors, actionA, actionB);
-
-            ProcessTwirl(rot, angleData, actionTypes, actionFloors);
-            ProcessPause(rot, angleData, actionTypes, actionFloors, actionA);
+            List<ChartAction> actions = ReadActions(root);
+            ProcessTwirl(rot, angleData, actions);
+            ProcessPause(rot, angleData, actions);
             double baseBpm = NormalizeBpm(plan.LevelBpm);
-            ProcessSetSpeed(rot, angleData, actionTypes, actionFloors, actionA, actionB,
+            ProcessSetSpeed(rot, angleData, actions,
                 baseBpm, plan.LevelBpm);
 
             RemoveMidSpins(rot, angleData);
@@ -144,8 +136,7 @@ namespace AdoFalling
                 if (!IsMidSpin(angleData, f))
                     playable.Add(f);
 
-            double[] beatByFloor = ReadBeatSeconds(plan.FloorCount, plan.LevelBpm,
-                actionTypes, actionFloors, actionA, actionB);
+            double[] beatByFloor = ReadBeatSeconds(plan.FloorCount, plan.LevelBpm, actions);
             int presses = Math.Min(Math.Max(0, playable.Count - 1), pressTimes.Length);
             plan.PlannedPresses = presses;
             plan.PressTimes = new double[presses];
@@ -166,24 +157,31 @@ namespace AdoFalling
             return plan;
         }
 
-        private static double[] ReadBeatSeconds(int count, double bpm, List<string> types,
-            List<int> floors, List<double> a, List<double> b)
+        private enum ActionKind { Twirl, Pause, Speed }
+        private struct ChartAction
         {
-            var events = new List<int>[count];
-            for (int i = 0; i < types.Count; i++)
+            public ActionKind Kind;
+            public int Floor;
+            public double Value;
+            public bool ByBpm;
+        }
+
+        private static double[] ReadBeatSeconds(int count, double bpm, List<ChartAction> actions)
+        {
+            var events = new List<ChartAction>[count];
+            foreach (ChartAction action in actions)
             {
-                int floor = floors[i];
-                if (types[i] != "SetSpeed" || floor < 0 || floor >= count) continue;
-                if (events[floor] == null) events[floor] = new List<int>();
-                events[floor].Add(i);
+                if (action.Kind != ActionKind.Speed || action.Floor < 0 || action.Floor >= count) continue;
+                if (events[action.Floor] == null) events[action.Floor] = new List<ChartAction>();
+                events[action.Floor].Add(action);
             }
             double[] beats = new double[count];
             for (int floor = 0; floor < count; floor++)
             {
                 if (events[floor] != null)
-                    foreach (int index in events[floor])
+                    foreach (ChartAction action in events[floor])
                     {
-                        double next = b[index] == 1.0 ? a[index] : bpm * a[index];
+                        double next = action.ByBpm ? action.Value : bpm * action.Value;
                         if (next <= 0.0 || double.IsNaN(next) || double.IsInfinity(next))
                             throw new FormatException("SetSpeed must produce a positive finite BPM.");
                         bpm = next;
@@ -191,18 +189,6 @@ namespace AdoFalling
                 beats[floor] = 60.0 / bpm;
             }
             return beats;
-        }
-
-        private static void EnsureJsonAssembly()
-        {
-            try
-            {
-                Assembly.Load("Newtonsoft.Json");
-            }
-            catch
-            {
-                // already loaded by the game, or resolvable by the runtime
-            }
         }
 
         private static double[] ReadAngles(JObject root)
@@ -275,42 +261,26 @@ namespace AdoFalling
             }
         }
 
-        private static void ReadActions(JObject root, List<string> types, List<int> floors,
-            List<double> a, List<double> b)
+        private static List<ChartAction> ReadActions(JObject root)
         {
+            var result = new List<ChartAction>();
             JArray actions = root["actions"] as JArray;
-            if (actions == null)
-                return;
-            for (int i = 0; i < actions.Count; i++)
+            if (actions == null) return result;
+            foreach (JToken token in actions)
             {
-                JObject action = actions[i] as JObject;
-                if (action == null)
-                    continue;
+                JObject action = token as JObject;
+                if (action == null) continue;
                 string type = action["eventType"] != null ? action["eventType"].ToString() : "";
-                if (type != "SetSpeed" && type != "Twirl" && type != "Pause")
-                    continue;
-
-                types.Add(type);
-                floors.Add(ToInt(action["floor"], 0));
-
-                double first = 0.0;
-                double second = 0.0;
-                if (type == "SetSpeed")
-                {
-                    bool byBpm = action["speedType"] != null
-                                 && action["speedType"].ToString() == "Bpm";
-                    first = byBpm
-                        ? ToDouble(action["beatsPerMinute"], 0.0)
-                        : ToDouble(action["bpmMultiplier"], 1.0);
-                    second = byBpm ? 1.0 : 0.0;   // marker: 1 = "Bpm", 0 = "Multiplier"
-                }
-                else if (type == "Pause")
-                {
-                    first = ToDouble(action["duration"], 0.0);
-                }
-                a.Add(first);
-                b.Add(second);
+                if (type != "SetSpeed" && type != "Twirl" && type != "Pause") continue;
+                bool byBpm = action["speedType"] != null && action["speedType"].ToString() == "Bpm";
+                result.Add(new ChartAction {
+                    Kind = type == "SetSpeed" ? ActionKind.Speed : type == "Twirl" ? ActionKind.Twirl : ActionKind.Pause,
+                    Floor = ToInt(action["floor"], 0), ByBpm = byBpm,
+                    Value = type == "SetSpeed" ? ToDouble(action[byBpm ? "beatsPerMinute" : "bpmMultiplier"], byBpm ? 0 : 1)
+                        : type == "Pause" ? ToDouble(action["duration"], 0) : 0
+                });
             }
+            return result;
         }
 
         // ------------------------------------------------------------------ the algorithm
@@ -370,24 +340,24 @@ namespace AdoFalling
         }
 
         private static void ProcessTwirl(List<double> rot, double[] angleData,
-            List<string> types, List<int> floors)
+            List<ChartAction> actions)
         {
             bool twirled = false;
             int lastFloor = 0;
             List<int> lo = new List<int>();
             List<int> hi = new List<int>();
 
-            for (int i = 0; i < types.Count; i++)
+            for (int i = 0; i < actions.Count; i++)
             {
-                if (types[i] != "Twirl")
+                if (actions[i].Kind != ActionKind.Twirl)
                     continue;
                 if (twirled)
                 {
                     lo.Add(lastFloor);
-                    hi.Add(floors[i]);
+                    hi.Add(actions[i].Floor);
                 }
                 twirled = !twirled;
-                lastFloor = floors[i];
+                lastFloor = actions[i].Floor;
             }
 
             for (int r = 0; r < lo.Count; r++)
@@ -401,57 +371,44 @@ namespace AdoFalling
         }
 
         private static void ProcessPause(List<double> rot, double[] angleData,
-            List<string> types, List<int> floors, List<double> a)
+            List<ChartAction> actions)
         {
-            for (int i = 0; i < types.Count; i++)
+            for (int i = 0; i < actions.Count; i++)
             {
-                if (types[i] != "Pause")
+                if (actions[i].Kind != ActionKind.Pause)
                     continue;
-                int floor = floors[i];
+                int floor = actions[i].Floor;
                 if (floor < rot.Count && !IsMidSpin(angleData, floor + 1))
-                    rot[floor] += a[i] * 180.0;
+                    rot[floor] += actions[i].Value * 180.0;
             }
         }
 
         private static void ProcessSetSpeed(List<double> rot, double[] angleData,
-            List<string> types, List<int> floors, List<double> a, List<double> b,
+            List<ChartAction> actions,
             double baseBpm, double levelBpm)
         {
             // Rebuild the macro's speedList: ranges where one SetSpeed setting is in effect.
             List<int> lo = new List<int>();
             List<int> hi = new List<int>();
             List<double> bpm = new List<double>();
-            List<double> mult = new List<double>();
 
             int floorCount = angleData.Length + 1;
             int lastFloor = 0;
             double lastBpm = levelBpm;
-            double multiplier = 1.0;
-            for (int i = 0; i < types.Count; i++)
+            for (int i = 0; i < actions.Count; i++)
             {
-                if (types[i] != "SetSpeed")
+                if (actions[i].Kind != ActionKind.Speed)
                     continue;
                 lo.Add(lastFloor);
-                hi.Add(floors[i]);
+                hi.Add(actions[i].Floor);
                 bpm.Add(lastBpm);
-                mult.Add(multiplier);
 
-                if (b[i] == 1.0)
-                {
-                    multiplier = a[i] / lastBpm;
-                    lastBpm = a[i];
-                }
-                else
-                {
-                    multiplier = a[i];
-                    lastBpm *= multiplier;
-                }
-                lastFloor = floors[i];
+                lastBpm = actions[i].ByBpm ? actions[i].Value : lastBpm * actions[i].Value;
+                lastFloor = actions[i].Floor;
             }
             lo.Add(lastFloor);
             hi.Add(floorCount - 1);
             bpm.Add(lastBpm);
-            mult.Add(multiplier);
 
             double globalMultiplier = baseBpm / levelBpm;
             for (int r = 0; r < lo.Count; r++)

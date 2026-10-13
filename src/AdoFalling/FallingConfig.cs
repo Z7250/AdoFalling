@@ -1,13 +1,12 @@
+using System.Globalization;
 using UnityEngine;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
     /// <summary>All tunables exposed through the UMM settings file.</summary>
     internal sealed class FallingConfig
     {
-        public readonly Setting<KeyCode> ToggleKey;
         public readonly Setting<float> PollInterval;
-        public readonly Setting<KeyCode> LoadKey;
         public readonly Setting<bool> DebugHud;
         public readonly Setting<bool> DemoMode;
         public readonly Setting<double> DemoBpm;
@@ -20,12 +19,15 @@ namespace AdoFalling
         public readonly Setting<float> NoteHeight;
         public readonly Setting<float> LaneWidth;
         public readonly Setting<float> LaneGap;
-        public readonly Setting<bool> MirrorDirection;
-        public readonly Setting<LaneMapping> LaneMapping;
+        public readonly Setting<float> FJGap;
         public readonly Setting<double> FingeringWindowMs;
+        public readonly Setting<FingeringMode> FingeringMode;
+        public readonly Setting<double> FingeringMinIntervalMs;
+        public readonly Setting<double> ChordWindowMs;
+        public readonly Setting<double> FingeringBpm;
+        public readonly Setting<bool> FingeringFollowSpeed;
         public readonly Setting<string> FilePath;
         public readonly Setting<double> FileOffsetSeconds;
-        public readonly Setting<bool> NoteRotation;
         public readonly Setting<bool> SkipAutoTiles;
         public readonly Setting<bool> MergeSameBeat;
         public readonly Setting<double> SameBeatEpsilon;
@@ -37,12 +39,6 @@ namespace AdoFalling
         public readonly Setting<double> HoldScale;
         public readonly Setting<bool> HoldShrinkWhileHeld;
         public readonly Setting<bool> SkipHoldReleaseTiles;
-        public readonly Setting<KeyCode> HoldLaterKey;
-        public readonly Setting<KeyCode> HoldEarlierKey;
-        public readonly Setting<KeyCode> TuneKey;
-        public readonly Setting<KeyCode> TuneEarlierKey;
-        public readonly Setting<KeyCode> TuneLaterKey;
-        public readonly Setting<KeyCode> ControlPanelKey;
         public readonly Setting<bool> ShowJudgeLine;
         public readonly Setting<bool> ShowNotes;
         public readonly Setting<bool> ShowHitEffects;
@@ -58,52 +54,80 @@ namespace AdoFalling
         public readonly Setting<Color> LaneEdgeColor;
         public readonly Setting<Color> JudgeColor;
         public readonly Setting<string> NoteColor;
-        public readonly Setting<Color> NoteAltColor;
-        private Color _noteColorCache = new Color(1f, 0f, 0f, 1f);
-        private string _noteColorCacheText;
-
-        /// <summary>
-        /// Note colour parsed from the config text. Accepts RGB like "255,0,0", hex like
-        /// "FF0000" / "#FF0000", optionally with a 4th alpha value ("255,0,0,128" or the
-        /// 8-digit hex "FF000080"). Invalid text falls back to red.
-        /// </summary>
-        public Color NoteColorValue
+        public readonly Setting<string> ChordColor;
+        public readonly Setting<string>[] NoteNormalColors = new Setting<string>[8];
+        public readonly Setting<string>[] NoteHighlightColors = new Setting<string>[8];
+        public static readonly string[] NoteColorKeys = { "A", "S", "D", "F", "J", "K", "L", "Semicolon" };
+        public const string DefaultHighlightColor = "#FFD966";
+        public const string DefaultChordColor = "#ADD8E6";
+        private static readonly Color HighlightFallback = ParseDefault(DefaultHighlightColor);
+        private static readonly Color ChordFallback = ParseDefault(DefaultChordColor);
+        private static Color ParseDefault(string text)
+        { Color color; TryParseNoteColor(text, out color); return color; }
+        private sealed class ColorCache
         {
-            get
+            private bool _ready;
+            private string _text;
+            private Color _value;
+            public Color Get(string text, Color fallback, string label)
             {
-                string text = NoteColor.Value;
-                if (text == _noteColorCacheText)
-                    return _noteColorCache;
-                _noteColorCacheText = text;
-                Color parsed;
-                if (TryParseNoteColor(text, out parsed))
-                    _noteColorCache = parsed;
-                else
+                if (_ready && _text == text) return _value;
+                _ready = true; _text = text;
+                if (!TryParseNoteColor(text, out _value))
                 {
-                    _noteColorCache = new Color(1f, 0f, 0f, 1f);
-                    FallingPlugin.Log.LogWarning("NoteColor: cannot read \"" + text +
-                        "\"; expected RGB like 255,0,0 or hex like FF0000. Using red.");
+                    _value = fallback;
+                    FallingPlugin.Log.LogWarning("Invalid " + label + "; using default colour");
                 }
-                return _noteColorCache;
+                return _value;
             }
         }
+        private readonly ColorCache _globalColor = new ColorCache(), _chordColor = new ColorCache();
+        private readonly ColorCache[] _laneColors = new ColorCache[16];
         public readonly Setting<float> LaneFlashStrength;
         public readonly Setting<float> JudgeFlashStrength;
+        public Color NoteColorValue { get { return _globalColor.Get(NoteColor.Value, new Color(1, 0, 0, 1), "Style/NoteColor"); } }
+        public Color ChordColorValue
+        {
+            get { return _chordColor.Get(ChordColor.Value, ChordFallback, "Style/ChordColor"); }
+        }
+
+        public Color NoteColorFor(NoteInstance note)
+        {
+            return note.IsChord ? ChordColorValue : NoteColorFor(note.Lane, note.IsGroupStart);
+        }
+
+        /// <summary>Resolve the logical key's normal or group-head colour.</summary>
+        public Color NoteColorFor(int lane, bool groupStart)
+        {
+            if (lane < 0 || lane >= NoteColorKeys.Length) return NoteColorValue;
+            int index = lane * 2 + (groupStart ? 1 : 0);
+            Color fallback = groupStart ? HighlightFallback : NoteColorValue;
+            if (_laneColors[index] == null) _laneColors[index] = new ColorCache();
+            return _laneColors[index].Get((groupStart ? NoteHighlightColors[lane] : NoteNormalColors[lane]).Value,
+                fallback, (groupStart ? "NoteColorsHighlight/" : "NoteColorsNormal/") + NoteColorKeys[lane]);
+        }
+
+        internal static string FormatNoteColor(Color color)
+        {
+            return string.Format(CultureInfo.InvariantCulture, "#{0:X2}{1:X2}{2:X2}{3:X2}",
+                ColorByte(color.r), ColorByte(color.g), ColorByte(color.b), ColorByte(color.a));
+        }
+
+        private static int ColorByte(float value)
+        {
+            return (int)System.Math.Round(System.Math.Max(0.0, System.Math.Min(1.0, value)) * 255.0);
+        }
 
         public FallingConfig(SettingsFile f)
         {
-            ToggleKey = f.Bind("General", "ToggleKey", KeyCode.F8);
-            LoadKey = f.Bind("General", "LoadKey", KeyCode.F4);
-            // F used to activate file mode. It is now the left index lane: accepting
-            // it here would restart the timeline on every normal index tap.
-            switch (LoadKey.Value)
-            {
-                case KeyCode.A: case KeyCode.S: case KeyCode.D: case KeyCode.F:
-                case KeyCode.J: case KeyCode.K: case KeyCode.L: case KeyCode.Semicolon:
-                    LoadKey.Value = KeyCode.F4;
-                    FallingPlugin.Log.LogInfo("LoadKey overlapped ASDFJKL; and was migrated to F4");
-                    break;
-            }
+            f.Remove("Layout", "NoteRotation");
+            f.Remove("Layout", "RightToLeft");
+            f.Remove("Layout", "LaneMapping");
+            f.Remove("Chart", "FingeringSixteenthProtection");
+            foreach (string key in new[] { "ToggleKey", "LoadKey" }) f.Remove("General", key);
+            foreach (string key in new[] { "TuneKey", "ControlPanelKey", "TuneEarlierKey", "TuneLaterKey", "HoldLaterKey", "HoldEarlierKey" })
+                f.Remove("Tuning", key);
+            f.Remove("Style", "NoteAltColor");
             PollInterval = f.Bind("General", "PollInterval", 0.05f);
             DebugHud = f.Bind("General", "DebugHud", false);
             DemoMode = f.Bind("General", "DemoMode", false);
@@ -117,12 +141,15 @@ namespace AdoFalling
             NoteHeight = f.Bind("Layout", "NoteHeight", 26f);
             LaneWidth = f.Bind("Layout", "LaneWidth", 70f);
             LaneGap = f.Bind("Layout", "LaneGap", 8f);
-            MirrorDirection = f.Bind("Layout", "RightToLeft", false);
-            LaneMapping = f.Bind("Layout", "LaneMapping", AdoFalling.LaneMapping.Fingering);
+            FJGap = f.Bind("Layout", "FJGap", 0f);
             FingeringWindowMs = f.Bind("Chart", "FingeringWindowMs", 180.0);
+            FingeringMode = f.Bind("Chart", "FingeringMode", AdoFalling8K.FingeringMode.Stable);
+            FingeringMinIntervalMs = f.Bind("Chart", "FingeringMinIntervalMs", FingeringPlanner.DefaultMinGroupIntervalMs);
+            ChordWindowMs = f.Bind("Chart", "ChordWindowMs", ChordVisuals.DefaultWindowMs);
+            FingeringBpm = f.Bind("Chart", "FingeringBpm", 0.0);
+            FingeringFollowSpeed = f.Bind("Chart", "FingeringFollowSpeed", false);
             FilePath = f.Bind("Chart", "FilePath", "");
             FileOffsetSeconds = f.Bind("Chart", "FileOffsetSeconds", 0.0);
-            NoteRotation = f.Bind("Layout", "NoteRotation", false);
             SkipAutoTiles = f.Bind("Chart", "SkipAutoTiles", true);
             MergeSameBeat = f.Bind("Chart", "MergeSameBeat", true);
             SameBeatEpsilon = f.Bind("Chart", "SameBeatEpsilon", 0.003);
@@ -130,15 +157,11 @@ namespace AdoFalling
             LeadInSeconds = f.Bind("Chart", "LeadInSeconds", 0.35);
             LeadFraction = f.Bind("Chart", "LeadFraction", 0.0);
             LeadOffsetManual = f.Bind("Chart", "LeadOffsetSeconds", 0.07);
-            TuneKey = f.Bind("Tuning", "TuneKey", KeyCode.F6);
-            ControlPanelKey = f.Bind("Tuning", "ControlPanelKey", KeyCode.F5);
             ShowJudgeLine = f.Bind("View", "ShowJudgeLine", true);
             ShowNotes = f.Bind("View", "ShowNotes", true);
             ShowLanes = f.Bind("View", "ShowLanes", true);
             ShowHitEffects = f.Bind("View", "ShowHitEffects", true);
             ShowJudgeText = f.Bind("View", "ShowJudgeText", true);
-            TuneEarlierKey = f.Bind("Tuning", "TuneEarlierKey", KeyCode.F7);
-            TuneLaterKey = f.Bind("Tuning", "TuneLaterKey", KeyCode.F9);
 
             // Hold notes get their own trim so they can be lined up independently of the
             // regular notes.
@@ -146,8 +169,6 @@ namespace AdoFalling
             HoldScale = f.Bind("Tuning", "HoldScale", 1.0);
             HoldShrinkWhileHeld = f.Bind("Tuning", "HoldShrinkWhileHeld", true);
             SkipHoldReleaseTiles = f.Bind("Chart", "SkipHoldReleaseTiles", true);
-            HoldLaterKey = f.Bind("Tuning", "HoldLaterKey", KeyCode.Minus);
-            HoldEarlierKey = f.Bind("Tuning", "HoldEarlierKey", KeyCode.Equals);
 
             LaneOpacity = f.Bind("Style", "LaneOpacity", 0.18f);
             LaneAlpha = f.Bind("Style", "LaneEdgeAlpha", 0.7f);
@@ -158,14 +179,21 @@ namespace AdoFalling
             LaneEdgeColor = f.Bind("Style", "LaneEdgeColor", new Color(0.35f, 0.55f, 0.95f, 1f));
             JudgeColor = f.Bind("Style", "JudgeLineColor", new Color(1f, 1f, 1f, 1f));
             NoteColor = f.Bind("Style", "NoteColor", "255,0,0");
-            NoteAltColor = f.Bind("Style", "NoteAltColor", new Color(0.4f, 0.7f, 1f, 1f));
+            ChordColor = f.Bind("Style", "ChordColor", DefaultChordColor);
+            // Seed new normal palettes from the previous global colour on upgrade.
+            string normal = FormatNoteColor(NoteColorValue);
+            for (int lane = 0; lane < NoteColorKeys.Length; lane++)
+            {
+                NoteNormalColors[lane] = f.Bind("NoteColorsNormal", NoteColorKeys[lane], normal);
+                NoteHighlightColors[lane] = f.Bind("NoteColorsHighlight", NoteColorKeys[lane], DefaultHighlightColor);
+            }
 
             LaneFlashStrength = f.Bind("Feedback", "LaneFlashStrength", 0.7f);
             JudgeFlashStrength = f.Bind("Feedback", "JudgeFlashStrength", 0.85f);
         }
 
         /// <summary>Parses "R,G,B[,A]" (0-255) or "#RRGGBB[AA]" ("#" optional).</summary>
-        private static bool TryParseNoteColor(string text, out Color color)
+        internal static bool TryParseNoteColor(string text, out Color color)
         {
             color = new Color(1f, 0f, 0f, 1f);
             if (string.IsNullOrEmpty(text))

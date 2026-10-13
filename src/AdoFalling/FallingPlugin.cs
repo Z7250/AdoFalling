@@ -1,7 +1,7 @@
 using System;
 using UnityEngine;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
     /// <summary>
     /// Draws a falling-note ("下落式") rhythm overlay on top of the stock ADOFAI chart.
@@ -37,9 +37,9 @@ namespace AdoFalling
             Instance = this;
             Log.LogInfo(PluginInfo.Name + " " + PluginInfo.Version + " loading");
             Log.LogInfo(string.Format(
-                "config: DebugHud={0} DemoMode={1} AutoPlay={2} CountdownLead={3} NoteSpeed={4} JudgeLineY={5} LaneMapping={6}",
+                "config: DebugHud={0} DemoMode={1} AutoPlay={2} CountdownLead={3} NoteSpeed={4} JudgeLineY={5} Fingering={6}",
                 Cfg.DebugHud.Value, Cfg.DemoMode.Value, Cfg.AutoPlay.Value, Cfg.CountdownLead.Value,
-                Cfg.NoteSpeedPxPerSec.Value, Cfg.JudgeLineY.Value, Cfg.LaneMapping.Value));
+                Cfg.NoteSpeedPxPerSec.Value, Cfg.JudgeLineY.Value, FingeringPlanner.ModeName(Cfg.FingeringMode.Value)));
 
             _view = new FallingView();
             _chart = new ChartReader();
@@ -47,6 +47,7 @@ namespace AdoFalling
             _engine = new FallingEngine(_view, _chart, Cfg);
             _renderer = new OverlayRenderer();
             _view.Build();
+            _panel.Configure(Cfg, _engine, _clock, LoadChartFile, StopChartFile, LogAlignment);
         }
 
         private void Update()
@@ -55,13 +56,10 @@ namespace AdoFalling
             try
             {
                 // Hotkey is polled every frame so it stays responsive.
-                if (Input.GetKeyDown(Cfg.ToggleKey.Value))
+                if (Input.GetKeyDown(KeyCode.F8))
                     _view.SetVisible(!_view.Visible);
 
-                if (Input.GetKeyDown(Cfg.LoadKey.Value))
-                    LoadChartFile();
-
-                HandleTuningKeys();
+                if (Input.GetKeyDown(KeyCode.F5)) TogglePanel();
 
                 // Polling the game costs a few reflection reads, so it runs at a modest rate.
                 if (Time.unscaledTime >= _nextPoll)
@@ -70,11 +68,11 @@ namespace AdoFalling
                     bool playing = _clock.Poll();
                     _clock.DemoDriven = false;
 
-                    // Leaving the level ends a file-chart run; press the load key again next time.
+                    // Leaving the level ends a file-chart run; start the file from the panel again next time.
                     if (!_clock.InLevelScene && MacroPlan.Active)
                     {
                         MacroPlan.Active = false;
-                        Log.LogInfo("file chart: left the level - press the load key to start again");
+                        Log.LogInfo("file chart: left the level - start from the panel again");
                     }
                     if (Cfg.DemoMode.Value && (!playing || Cfg.ForceDemo.Value))
                     {
@@ -121,9 +119,9 @@ namespace AdoFalling
         /// Load / refresh the .adofai chart file in Chart/FilePath and start file mode: the
         /// overlay's timing comes from the file and lanes use the shared hand-group planner.
         /// The first press of the file plan is
-        /// due at the moment this key is pressed (press it on the first tile, like the macro).
+        /// due at the moment the panel load action runs.
         /// </summary>
-        private void LoadChartFile()
+        internal void LoadChartFile()
         {
             string path = Cfg.FilePath.Value;
             if (string.IsNullOrEmpty(path))
@@ -136,7 +134,7 @@ namespace AdoFalling
                 }
                 else
                 {
-                    Log.LogWarning("load key pressed, but Chart/FilePath is empty");
+                    Log.LogWarning("Chart/FilePath is empty");
                 }
                 return;
             }
@@ -149,111 +147,24 @@ namespace AdoFalling
 
             MacroPlan.Active = true;
             MacroPlan.AnchorSongTime = _clock.SongPosition;
-            Cfg.LaneMapping.Value = LaneMapping.Fingering;
             _view.SetVisible(true);   // starting the reader also shows the overlay
             _chart.Rebuild();         // drop the old notes so the file chart is built fresh
             Log.LogInfo(string.Format(
-                "file chart started at {0:F3}s ({1} notes) - press {2} again to restart",
-                MacroPlan.AnchorSongTime, plan.PressCount, Cfg.LoadKey.Value));
+                "file chart started at {0:F3}s ({1} notes) - restart from the panel",
+                MacroPlan.AnchorSongTime, plan.PressCount));
         }
 
-        /// <summary>
-        /// In-game alignment tuning. Changes apply immediately so the effect is visible on the
-        /// next note, and the values are written back to the config file when the panel closes.
-        /// </summary>
-        private void HandleTuningKeys()
+        internal void StopChartFile()
         {
-            if (Input.GetKeyDown(Cfg.ControlPanelKey.Value))
-                TogglePanel();
+            MacroPlan.Active = false;
+            _chart.Rebuild();
+        }
 
-            if (Input.GetKeyDown(Cfg.TuneKey.Value))
-                Log.LogInfo(string.Format("alignment: raw={0:F3}s displayed={1:F3}s lead={2:F3}s trim={3:F3}s hold={4:F3}s",
-                    _clock.SongPosition, _clock.SongTime, _clock.LeadOffset,
-                    Cfg.LeadOffsetManual.Value, Cfg.HoldOffsetSeconds.Value));
-
-            float step = (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
-                ? 0.05f : 0.01f;
-
-            // Hold trim works whether or not the panel is open, so it can be dialled in while
-            // actually playing a chart with holds.
-            bool holdChanged = false;
-            if (Input.GetKeyDown(Cfg.HoldLaterKey.Value))
-            {
-                Cfg.HoldOffsetSeconds.Value = Cfg.HoldOffsetSeconds.Value - step;
-                holdChanged = true;
-            }
-            if (Input.GetKeyDown(Cfg.HoldEarlierKey.Value))
-            {
-                Cfg.HoldOffsetSeconds.Value = Cfg.HoldOffsetSeconds.Value + step;
-                holdChanged = true;
-            }
-            if (Input.GetKeyDown(KeyCode.Backspace))
-            {
-                Cfg.HoldOffsetSeconds.Value = 0.0;
-                holdChanged = true;
-            }
-            if (Input.GetKeyDown(KeyCode.LeftBracket))
-            {
-                Cfg.HoldScale.Value = System.Math.Max(0.2, Cfg.HoldScale.Value - 0.05);
-                holdChanged = true;
-            }
-            if (Input.GetKeyDown(KeyCode.RightBracket))
-            {
-                Cfg.HoldScale.Value = System.Math.Min(3.0, Cfg.HoldScale.Value + 0.05);
-                holdChanged = true;
-            }
-            // Snap the trims to a sane precision before saving: repeated +/- steps leave float
-            // dust behind (4.4E-16 instead of 0) which then shows up in the config file.
-            Cfg.HoldOffsetSeconds.Value = System.Math.Round(Cfg.HoldOffsetSeconds.Value, 3);
-            Cfg.LeadOffsetManual.Value = System.Math.Round(Cfg.LeadOffsetManual.Value, 3);
-
-            if (holdChanged)
-            {
-                Main.SaveSettings();
-                Log.LogInfo(string.Format(
-                    "hold trim: offset={0:F3}s scale={1:F2}  ('-' later, '=' earlier, Backspace reset, [ ] scale)",
-                    Cfg.HoldOffsetSeconds.Value, Cfg.HoldScale.Value));
-            }
-
-            // Note timing keys still work outside the panel, mirroring the F5 sliders.
-            bool noteChanged = false;
-            if (Input.GetKeyDown(Cfg.TuneEarlierKey.Value))
-            {
-                Cfg.LeadOffsetManual.Value = Cfg.LeadOffsetManual.Value + step;
-                noteChanged = true;
-            }
-            if (Input.GetKeyDown(Cfg.TuneLaterKey.Value))
-            {
-                Cfg.LeadOffsetManual.Value = Cfg.LeadOffsetManual.Value - step;
-                noteChanged = true;
-            }
-            if (Input.GetKeyDown(KeyCode.End))
-            {
-                Cfg.LeadOffsetManual.Value = 0.0;
-                noteChanged = true;
-            }
-            if (Input.GetKeyDown(KeyCode.PageUp))
-            {
-                Cfg.LeadFraction.Value = System.Math.Min(1.5, Cfg.LeadFraction.Value + 0.05);
-                noteChanged = true;
-            }
-            if (Input.GetKeyDown(KeyCode.PageDown))
-            {
-                Cfg.LeadFraction.Value = System.Math.Max(0.0, Cfg.LeadFraction.Value - 0.05);
-                noteChanged = true;
-            }
-            if (noteChanged)
-            {
-                Cfg.LeadOffsetManual.Value = System.Math.Round(Cfg.LeadOffsetManual.Value, 3);
-                _engine.Retune(_clock);
-                _engine.ResetJudgeStats();
-                _panel.SyncFromConfig(Cfg);
-                Log.LogInfo(string.Format("note trim: offset={0:F3}s fraction={1:F2}",
-                    Cfg.LeadOffsetManual.Value, Cfg.LeadFraction.Value));
-            }
-
-            if (holdChanged)
-                _panel.SyncFromConfig(Cfg);
+        private void LogAlignment()
+        {
+            Log.LogInfo(string.Format("alignment: raw={0:F3}s displayed={1:F3}s lead={2:F3}s trim={3:F3}s hold={4:F3}s",
+                _clock.SongPosition, _clock.SongTime, _clock.LeadOffset,
+                Cfg.LeadOffsetManual.Value, Cfg.HoldOffsetSeconds.Value));
         }
 
         /// <summary>True while the control panel is open.</summary>
@@ -301,7 +212,6 @@ namespace AdoFalling
 
                 if (_panel.Visible)
                 {
-                    _panel.SetClock(_clock);
                     _panel.Draw(_engine, Cfg, _clock);
                 }
                 else if (_chart.Count == 0)
@@ -334,7 +244,7 @@ namespace AdoFalling
             style.fontSize = Mathf.RoundToInt(16f * refScale);
             style.alignment = TextAnchor.UpperLeft;
 
-            string hint = "按 " + Cfg.ControlPanelKey.Value + " 调出控制面板";
+            string hint = "按 F5 调出控制面板，F8 显示／隐藏叠加层";
             Vector2 size = style.CalcSize(new GUIContent(hint));
 
             float pad = 8f * refScale;
@@ -369,7 +279,7 @@ namespace AdoFalling
 
     internal static class PluginInfo
     {
-        public const string Name = "AdoFalling - falling-note overlay";
-        public const string Version = "0.7.0";
+        public const string Name = "AdoFalling8K";
+        public const string Version = "0.8";
     }
 }

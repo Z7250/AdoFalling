@@ -1,5 +1,6 @@
 param(
-    [string]$JsonDll = "D:\steam\steamapps\common\A Dance of Fire and Ice\umm\Newtonsoft.Json.dll"
+    [string]$JsonDll = "D:\steam\steamapps\common\A Dance of Fire and Ice\umm\Newtonsoft.Json.dll",
+    [string]$RegressionChart = ""
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -9,6 +10,7 @@ $csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $exe = Join-Path $outDir 'PlannerTests.exe'
 & $csc /nologo /target:exe /langversion:5 /optimize+ /nowarn:0649 /out:$exe `
     (Join-Path $repo 'src\AdoFalling\FingeringPlanner.cs') `
+    (Join-Path $repo 'src\AdoFalling\ChordVisuals.cs') `
     (Join-Path $repo 'src\AdoFalling\NoteInstance.cs') `
     (Join-Path $PSScriptRoot 'PlannerTests.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Planner test compilation failed' }
@@ -23,13 +25,18 @@ $chartExe = Join-Path $outDir 'ChartTests.exe'
 Copy-Item -LiteralPath $JsonDll -Destination (Join-Path $outDir 'Newtonsoft.Json.dll') -Force
 & $csc /nologo /target:exe /langversion:5 /optimize+ /nowarn:0649 /out:$chartExe /reference:$JsonDll `
     (Join-Path $repo 'src\AdoFalling\FingeringPlanner.cs') `
+    (Join-Path $repo 'src\AdoFalling\ChordVisuals.cs') `
     (Join-Path $repo 'src\AdoFalling\NoteInstance.cs') `
     (Join-Path $repo 'src\AdoFalling\MacroPlan.cs') `
     (Join-Path $repo 'src\AdoFalling\ChartReader.cs') `
+    (Join-Path $repo 'src\AdoFalling\GameReflection.cs') `
     (Join-Path $repo 'src\AdoFalling\FallingView.cs') `
+    (Join-Path $repo 'src\AdoFalling\FallingEngine.cs') `
     (Join-Path $PSScriptRoot 'ChartTests.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Chart test compilation failed' }
-& $chartExe (Join-Path $outDir 'fixtures')
+$chartArguments = @((Join-Path $outDir 'fixtures'))
+if ($RegressionChart) { $chartArguments += (Resolve-Path -LiteralPath $RegressionChart).Path }
+& $chartExe @chartArguments
 if ($LASTEXITCODE -ne 0) { throw 'Chart integration checks failed' }
 
 $fakeGame = Join-Path $outDir 'Assembly-CSharp.dll'
@@ -40,8 +47,15 @@ $runtimeExe = Join-Path $outDir 'RuntimeTests.exe'
     (Join-Path $repo 'src\AdoFalling\Main.cs') `
     (Join-Path $repo 'src\AdoFalling\FallingPlugin.cs') `
     (Join-Path $repo 'src\AdoFalling\FallingConfig.cs') `
+    (Join-Path $repo 'src\AdoFalling\FingeringPlanner.cs') `
+    (Join-Path $repo 'src\AdoFalling\ChordVisuals.cs') `
+    (Join-Path $repo 'src\AdoFalling\NoteColorEditor.cs') `
     (Join-Path $repo 'src\AdoFalling\SettingsFile.cs') `
     (Join-Path $repo 'src\AdoFalling\GameClock.cs') `
+    (Join-Path $repo 'src\AdoFalling\GameState.cs') `
+    (Join-Path $repo 'src\AdoFalling\GameReflection.cs') `
+    (Join-Path $repo 'src\AdoFalling\ControlPanel.cs') `
+    (Join-Path $repo 'src\AdoFalling\PanelControls.cs') `
     (Join-Path $repo 'src\AdoFalling\AutoPlayDriver.cs') `
     (Join-Path $repo 'src\AdoFalling\NoteInstance.cs') `
     (Join-Path $PSScriptRoot 'RuntimeHost.cs') `

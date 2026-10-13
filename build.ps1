@@ -26,7 +26,7 @@ foreach ($path in @($csc, $managed, (Join-Path $UmmDir "UnityModManager.dll"))) 
 
 $manifestPath = Join-Path $repo "Info.json"
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-if ($manifest.Id -ne "AdoFalling" -or $manifest.AssemblyName -ne "AdoFalling.dll" -or $manifest.EntryMethod -ne "AdoFalling.Main.Load") {
+if ($manifest.Id -ne "AdoFalling8K" -or $manifest.AssemblyName -ne "AdoFalling8K.dll" -or $manifest.EntryMethod -ne "AdoFalling8K.Main.Load") {
     throw "Info.json does not match the UMM entry point"
 }
 $pluginSource = Get-Content -LiteralPath (Join-Path $srcDir "FallingPlugin.cs") -Raw
@@ -63,12 +63,12 @@ $packageDll = Join-Path $packageDir $manifest.AssemblyName
 $packageInfo = Join-Path $packageDir "Info.json"
 Copy-Item -LiteralPath $dll -Destination $packageDll -Force
 Copy-Item -LiteralPath $manifestPath -Destination $packageInfo -Force
-$zip = Join-Path $outDir ("AdoFalling-" + $manifest.Version + "-UMM.zip")
+$zip = Join-Path $outDir ($manifest.Id + "-" + $manifest.Version + "-UMM.zip")
 Compress-Archive -LiteralPath $packageInfo,$packageDll -DestinationPath $zip -Force
 Write-Host "Packaged -> $zip"
 
 if ($Install) {
-    $modDir = Join-Path $GameDir "Mods\AdoFalling"
+    $modDir = Join-Path $GameDir ("Mods\" + $manifest.Id)
     New-Item -ItemType Directory -Force -Path $modDir | Out-Null
     Copy-Item -LiteralPath $packageDll,$packageInfo -Destination $modDir -Force
     Write-Host "Installed -> $modDir (existing settings.json preserved)"

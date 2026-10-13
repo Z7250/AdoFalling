@@ -3,7 +3,7 @@ using System.IO;
 using UnityEngine;
 using UnityModManagerNet;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
     /// <summary>Unity Mod Manager entry point and lifecycle ownership.</summary>
     public static class Main
@@ -28,7 +28,7 @@ namespace AdoFalling
             }
             catch (Exception ex)
             {
-                entry.Logger.Error("AdoFalling load failed: " + ex);
+                entry.Logger.Error("AdoFalling8K load failed: " + ex);
                 return false;
             }
         }
@@ -50,7 +50,7 @@ namespace AdoFalling
             catch (Exception ex)
             {
                 Stop();
-                entry.Logger.Error("AdoFalling toggle failed: " + ex);
+                entry.Logger.Error("AdoFalling8K toggle failed: " + ex);
                 return false;
             }
         }
@@ -82,8 +82,7 @@ namespace AdoFalling
         private static void OnGUI(UnityModManager.ModEntry entry)
         {
             FallingConfig cfg = FallingPlugin.Cfg;
-            GUILayout.Label("ASDF / JKL;   |   " + cfg.ControlPanelKey.Value + ": control panel   |   "
-                + cfg.LoadKey.Value + ": start file chart   |   " + cfg.ToggleKey.Value + ": overlay");
+            GUILayout.Label("ASDF / JKL;   |   F5: control panel   |   F8: overlay");
             GUILayout.Label("Settings: " + Path.Combine(entry.Path, "settings.json"));
             FallingPlugin runtime = FallingPlugin.Instance;
             if (runtime != null && GUILayout.Button("Open / close control panel")) runtime.TogglePanel();

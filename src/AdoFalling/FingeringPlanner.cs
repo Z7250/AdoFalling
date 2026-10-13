@@ -1,14 +1,16 @@
 using System;
 using System.Collections.Generic;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
+    internal enum FingeringMode { Stable, Aggressive, FourKey }
+
     /// <summary>
-    /// Alternating hand groups on ASDF / JKL;. A group normally occupies an eighth
-    /// beat and uses one to four fingers from the outside towards the index finger.
+    /// Alternating hand groups on ASDF / JKL;, using one to four fingers from the
+    /// outside towards the index finger. Aggressive prefers D/F/J/K until twenty-fourths.
     /// A bounded search keeps the pulse through subdivisions, but can move a boundary
     /// or its phase to avoid a very short cross-hand interval on syncopated passages.
-    /// Only Lane is changed; timing, chart order and hold lengths are preserved.
+    /// Lanes and group heads are assigned; timing, chart order and hold lengths are preserved.
     /// </summary>
     internal static class FingeringPlanner
     {
@@ -16,6 +18,8 @@ namespace AdoFalling
         public const int FingersPerHand = 4;
         public const string Keys = "ASDFJKL;";
         public const double DefaultWindowMs = 180.0;
+        public const double DefaultMinGroupIntervalMs = 60000.0 / 180.0 / 2.0;
+        public const double RollIntervalToleranceMs = 5.0;
         private const int BeamWidth = 12;
         private const double Epsilon = 0.000001;
 
@@ -34,16 +38,48 @@ namespace AdoFalling
 
         /// <param name="windowMs">Cross-hand protection in milliseconds, capped at a
         /// quarter of the local hand-group period. It never determines note subdivision.</param>
-        public static string Assign(List<NoteInstance> notes, double windowMs)
+        /// <param name="referenceBeatSeconds">Musical quarter-note duration. Chart speed
+        /// events affect note times without redefining this hand pulse when it is set.</param>
+        /// <param name="minGroupIntervalMs">Lower bound for the base hand pulse. Zero
+        /// disables the safeguard; very dense passages still invoke four-finger capacity scaling.</param>
+        /// <param name="mode">Stable retains the musical pulse; Aggressive prefers larger
+        /// uniform rolls with each adjacent interval no longer than two thirds of the
+        /// protected eighth pulse. Three/four-finger rolls require protected twenty-fourths.
+        /// FourKey uses Aggressive's rules, releasing the lower bound only in spans
+        /// that qualify for outer-finger expansion.</param>
+        public static string Assign(List<NoteInstance> notes, double windowMs, double referenceBeatSeconds = 0.0,
+            double minGroupIntervalMs = DefaultMinGroupIntervalMs, FingeringMode mode = FingeringMode.Stable)
         {
             if (notes.Count == 0)
-                return "hand groups: no notes";
+                return ModeName(mode) + ": no notes";
+            bool aggressive = mode == FingeringMode.Aggressive || mode == FingeringMode.FourKey;
             double protection = Positive(windowMs) ? windowMs / 1000.0 : DefaultWindowMs / 1000.0;
+            double minimum = MinGroupIntervalSeconds(minGroupIntervalMs);
             double[] pulse = new double[notes.Count];
             double[] seconds = new double[notes.Count];
+            double[] outerIntervals = new double[notes.Count];
+            double[] musicalSeconds = new double[notes.Count];
             for (int i = 0; i < notes.Count; i++)
             {
-                seconds[i] = PeriodSeconds(notes, i);
+                seconds[i] = Positive(referenceBeatSeconds) ? referenceBeatSeconds * 0.5 : PeriodSeconds(notes, i);
+                musicalSeconds[i] = seconds[i];
+                // Tempo metadata must not turn rapid taps back into single-finger groups.
+                seconds[i] = Math.Max(seconds[i], minimum);
+                outerIntervals[i] = seconds[i] / 3.0;
+            }
+            if (mode == FingeringMode.FourKey)
+            {
+                // Test the original protected expansion condition first. A single fast
+                // pair or an outer key borrowed around a hold does not release the guard.
+                var expanded = new bool[notes.Count];
+                for (int start = 0; start + 2 < notes.Count; start++)
+                    if (FitsAggressiveGroup(notes, seconds, outerIntervals, start, 3))
+                        for (int j = 0; j < 3; j++) expanded[start + j] = true;
+                for (int i = 0; i < notes.Count; i++)
+                    if (expanded[i]) seconds[i] = musicalSeconds[i];
+            }
+            for (int i = 0; i < notes.Count; i++)
+            {
                 if (i > 0)
                 {
                     double gap = notes[i].HitTime - notes[i - 1].HitTime;
@@ -65,20 +101,36 @@ namespace AdoFalling
                 List<Plan> paths = frontier[start];
                 if (paths == null)
                     continue;
-                double period = CapacityPeriod(pulse, start);
+                double period = aggressive ? 1.0 : CapacityPeriod(pulse, start);
                 foreach (Plan previous in paths)
                 {
                     for (int size = 1; size <= FingersPerHand && start + size <= notes.Count; size++)
                     {
-                        if (size > 1 && !FitsGroup(pulse, seconds, start, size, period))
+                        if (size > 1 && !(aggressive ? FitsAggressiveGroup(notes, seconds, outerIntervals, start, size)
+                            : FitsGroup(notes, pulse, seconds, start, size, period)))
                             break;
-                        double phaseCost;
-                        double nextPulse = NextPulse(previous, pulse[start], period, out phaseCost);
-                        double rhythmCost = phaseCost + (size - 1) * 0.08;
-                        for (int j = 1; j < size; j++)
-                            rhythmCost += Math.Max(0.0, pulse[start + j] - nextPulse + Epsilon) / period * 6.0;
+                        double nextPulse, rhythmCost;
+                        double groupPeriod = period;
+                        if (aggressive)
+                        {
+                            // A wider roll can span multiple eighths. Keep the base period
+                            // safeguard, and prefer fewer groups, packing earlier groups first.
+                            double lastInterval = size > 1
+                                ? (notes[start + size - 1].HitTime - notes[start + size - 2].HitTime) / seconds[start + size - 2] : 0.0;
+                            groupPeriod = Math.Max(1.0, pulse[start + size - 1] - pulse[start] + lastInterval);
+                            nextPulse = pulse[start] + groupPeriod;
+                            rhythmCost = 4.0 + (FingersPerHand - size) * .01 / (start + 1.0);
+                        }
+                        else
+                        {
+                            double phaseCost;
+                            nextPulse = NextPulse(previous, pulse[start], period, out phaseCost);
+                            rhythmCost = phaseCost + (size - 1) * 0.08;
+                            for (int j = 1; j < size; j++)
+                                rhythmCost += Math.Max(0.0, pulse[start + j] - nextPulse + Epsilon) / period * 6.0;
+                        }
 
-                        double boundary = Math.Min(protection, seconds[start] * period * 0.25);
+                        double boundary = Math.Min(protection, seconds[start] * groupPeriod * 0.25);
                         if (start > 0)
                         {
                             double gap = notes[start].HitTime - notes[start - 1].HitTime;
@@ -115,7 +167,7 @@ namespace AdoFalling
                                 candidate.FingerMask = mask;
                                 candidate.Cost = cost;
                                 candidate.NextPulse = nextPulse;
-                                candidate.Period = period;
+                                candidate.Period = groupPeriod;
                                 Array.Copy(previous.HeldUntil, candidate.HeldUntil, LaneCount);
                                 int noteIndex = start;
                                 for (int finger = 3; finger >= 0; finger--)
@@ -154,11 +206,43 @@ namespace AdoFalling
                         continue;
                     NoteInstance n = notes[noteIndex];
                     n.Lane = Lane(p.Hand, finger);
+                    n.IsGroupStart = noteIndex == p.Start;
                     notes[noteIndex++] = n;
                 }
             }
-            return string.Format("hand groups: {0} notes, {1} groups ({2} rolls), ASDF/JKL;, same-hand exceptions {3}",
-                notes.Count, groups, rolls, exceptions);
+            return string.Format("{4}: {0} notes, {1} groups ({2} rolls), ASDF/JKL;, same-hand exceptions {3}",
+                notes.Count, groups, rolls, exceptions, ModeName(mode));
+        }
+
+        public static string ModeName(FingeringMode mode)
+        {
+            return mode == FingeringMode.FourKey ? "4K"
+                : mode == FingeringMode.Aggressive ? "伪4K" : "8K";
+        }
+
+        private static bool FitsAggressiveGroup(List<NoteInstance> notes, double[] seconds,
+            double[] outerIntervals, int start, int size)
+        {
+            double firstGap = notes[start + 1].HitTime - notes[start].HitTime;
+            for (int j = 1; j < size; j++)
+            {
+                double gap = notes[start + j].HitTime - notes[start + j - 1].HitTime;
+                if (gap > seconds[start + j - 1] * (2.0 / 3.0) + 0.000000001) return false;
+                // Slower rolls use at most two fingers per hand (D/F or K/J).
+                // Held keys can still require an outer finger through Available().
+                if (size >= 3 && gap > outerIntervals[start + j - 1] + 0.000000001) return false;
+                if (size >= 3 && j >= 2 && Math.Abs(gap - firstGap)
+                    > RollIntervalToleranceMs / 1000.0 + 0.000000001) return false;
+                if (Math.Abs(seconds[start + j] - seconds[start]) > seconds[start] * .01) return false;
+            }
+            return true;
+        }
+
+        internal static double MinGroupIntervalSeconds(double milliseconds)
+        {
+            if (milliseconds < 0.0 || double.IsNaN(milliseconds) || double.IsInfinity(milliseconds))
+                milliseconds = DefaultMinGroupIntervalMs;
+            return milliseconds / 1000.0;
         }
 
         private static double PeriodSeconds(List<NoteInstance> notes, int index)
@@ -190,12 +274,19 @@ namespace AdoFalling
             return period;
         }
 
-        private static bool FitsGroup(double[] pulse, double[] seconds, int start, int size, double period)
+        private static bool FitsGroup(List<NoteInstance> notes, double[] pulse, double[] seconds,
+            int start, int size, double period)
         {
             if (pulse[start + size - 1] - pulse[start] >= period - Epsilon)
                 return false;
+            double firstGap = notes[start + 1].HitTime - notes[start].HitTime;
             for (int j = 1; j < size; j++)
             {
+                // Two-note rolls retain their original eligibility. Larger rolls must
+                // keep each real interval within +/-5ms of the first interval.
+                if (size >= 3 && j >= 2 && Math.Abs(notes[start + j].HitTime - notes[start + j - 1].HitTime
+                    - firstGap) > RollIntervalToleranceMs / 1000.0 + 0.000000001)
+                    return false;
                 if (pulse[start + j] - pulse[start + j - 1] > period * 0.75 + Epsilon)
                     return false;
                 // A tempo event starts a new group; its quarter-note length changes

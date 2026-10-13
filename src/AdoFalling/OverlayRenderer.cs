@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
     /// <summary>
     /// Draws the falling overlay with immediate-mode GUI.
@@ -65,26 +65,6 @@ namespace AdoFalling
             GUI.color = prev;
         }
 
-        /// <summary>Fill a rectangle rotated about its own centre.</summary>
-        private void FillRotated(Rect r, Color c, float degrees)
-        {
-            if (c.a <= 0.002f || r.width <= 0f || r.height <= 0f)
-                return;
-            Matrix4x4 prev = GUI.matrix;
-            GUIUtility.RotateAroundPivot(degrees, new Vector2(r.x + r.width * 0.5f, r.y + r.height * 0.5f));
-            Fill(r, c);
-            GUI.matrix = prev;
-        }
-
-        /// <summary>Horizontal offset of a lane in screen pixels, honouring the mirror option.</summary>
-        private float LaneX(FallingConfig cfg, float x0, float laneW, float laneGap, int lane)
-        {
-            if (lane < 0) lane = 0;
-            if (lane >= FallingView.LaneCount) lane = FallingView.LaneCount - 1;
-            int idx = cfg.MirrorDirection.Value ? (FallingView.LaneCount - 1 - lane) : lane;
-            return x0 + idx * (laneW + laneGap);
-        }
-
         public void Draw(List<NoteInstance> notes, FallingEngine engine, FallingView view,
             FallingConfig cfg, double clockNow)
         {
@@ -97,11 +77,8 @@ namespace AdoFalling
             // Judgement line: view geometry is measured from the bottom, IMGUI from the top.
             float judgeY = h - view.JudgeY;
             float laneW = view.LaneWidthPx;
-            float laneGap = cfg.LaneGap.Value * refScale;
             float noteH = Mathf.Max(6f, cfg.NoteHeight.Value * refScale);
 
-            float total = FallingView.LaneCount * laneW + (FallingView.LaneCount - 1) * laneGap;
-            float x0 = (w - total) * 0.5f;
 
             // The strip runs from the top edge of the screen down to the judgement line.
             float stripTop = 0f;
@@ -118,7 +95,7 @@ namespace AdoFalling
                 body.a = cfg.LaneOpacity.Value;
                 for (int i = 0; i < FallingView.LaneCount; i++)
                 {
-                    float x = LaneX(cfg, x0, laneW, laneGap, i);
+                    float x = view.LaneLeft(i);
                     Fill(new Rect(x, stripTop, laneW, stripHeight), body);
                 }
 
@@ -127,7 +104,7 @@ namespace AdoFalling
                 float t = Mathf.Max(1f, 2f * refScale);
                 for (int i = 0; i < FallingView.LaneCount; i++)
                 {
-                    float x = LaneX(cfg, x0, laneW, laneGap, i);
+                    float x = view.LaneLeft(i);
                     Fill(new Rect(x, stripTop, t, stripHeight), edge);
                     Fill(new Rect(x + laneW - t, stripTop, t, stripHeight), edge);
                     // bottom edge of the lane, sitting on the judgement line
@@ -137,7 +114,7 @@ namespace AdoFalling
                 keyStyle.fontSize = Mathf.RoundToInt(16f * refScale);
                 for (int lane = 0; lane < FallingView.LaneCount; lane++)
                 {
-                    float x = LaneX(cfg, x0, laneW, laneGap, lane);
+                    float x = view.LaneLeft(lane);
                     GUI.Label(new Rect(x, judgeY + noteH, laneW, 24f * refScale),
                         FingeringPlanner.Keys[lane].ToString(), keyStyle);
                 }
@@ -147,7 +124,7 @@ namespace AdoFalling
             if (engine.LaneFlashActive && cfg.ShowHitEffects.Value)
             {
                 float k = engine.LaneFlash;
-                float x = LaneX(cfg, x0, laneW, laneGap, engine.LaneFlashLane);
+                float x = view.LaneLeft(engine.LaneFlashLane);
                 float strength = cfg.LaneFlashStrength.Value;
 
                 // The lane washes white with a tint of the judgement colour. White is what
@@ -201,7 +178,7 @@ namespace AdoFalling
             if (engine.JudgeFlash > 0.01f && engine.HitFlashActive && cfg.ShowHitEffects.Value)
             {
                 float jt2 = Mathf.Max(2f, 4f * refScale);
-                float hx = LaneX(cfg, x0, laneW, laneGap, engine.HitFlashLane);
+                float hx = view.LaneLeft(engine.HitFlashLane);
                 Color beam = engine.HitFlashColor;
                 beam.a = Mathf.Clamp01(0.95f * engine.HitFlash);
 
@@ -227,7 +204,7 @@ namespace AdoFalling
             for (int i = 0; i < notes.Count; i++)
             {
                 NoteInstance n = notes[i];
-                if (!n.Active || n.HoldSeconds <= 0.0 || cfg.NoteRotation.Value)
+                if (!n.Active || n.HoldSeconds <= 0.0)
                     continue;
 
                 float pxPerSec = Mathf.Max(1f, cfg.NoteSpeedPxPerSec.Value * refScale);
@@ -255,7 +232,7 @@ namespace AdoFalling
                 if (headEnd < stripTop - length || tailEnd > h)
                     continue;
 
-                float x = LaneX(cfg, x0, laneW, laneGap, n.Lane);
+                float x = view.LaneLeft(n.Lane);
                 Rect bar = new Rect(x, tailEnd, laneW, length);
 
                 Color barBody = col;
@@ -282,7 +259,7 @@ namespace AdoFalling
                 if (!n.Active)
                     continue;
 
-                float x = LaneX(cfg, x0, laneW, laneGap, n.Lane);
+                float x = view.LaneLeft(n.Lane);
 
                 // n.DistancePx is measured upward from the line; screen y grows downward.
                 float y = judgeY - n.DistancePx;
@@ -292,17 +269,8 @@ namespace AdoFalling
                 Color col = n.Color;
                 col.a *= cfg.NoteOpacity.Value;
 
-                if (cfg.NoteRotation.Value)
-                {
-                    float deg = Mathf.Clamp(-n.DistancePx / Mathf.Max(1f, h) * 22f, -22f, 22f);
-                    FillRotated(new Rect(x, y - noteH * 0.5f, laneW, noteH), col, deg);
-                }
-                else
-                {
-                    // The head only: the hold tail was already drawn in the pass above, so it
-                    // can never cover another note's head.
-                    Fill(new Rect(x, y - noteH * 0.5f, laneW, noteH), col);
-                }
+                // Hold tails were drawn earlier so they cannot cover another head.
+                Fill(new Rect(x, y - noteH * 0.5f, laneW, noteH), col);
                 // brighter leading edge (the side that reaches the line first)
                 Color core = col;
                 core.a = Mathf.Min(1f, col.a * 1.35f);
@@ -319,7 +287,7 @@ namespace AdoFalling
                 HitEffect e = fx[i];
                 float progress = Mathf.Clamp01(e.Age / e.Lifetime);
                 float k = 1f - progress;                               // 1 -> 0
-                float x = LaneX(cfg, x0, laneW, laneGap, e.Lane);
+                float x = view.LaneLeft(e.Lane);
 
                 // bright bar that expands and fades at the judgement line
                 Color burst = e.Color;
@@ -344,7 +312,7 @@ namespace AdoFalling
 
                 float progress = Mathf.Clamp01(e.Age / e.Lifetime);
                 float k = 1f - progress;
-                float x = LaneX(cfg, x0, laneW, laneGap, e.Lane);
+                float x = view.LaneLeft(e.Lane);
 
                 GUIStyle style = TextStyle();
                 int size = Mathf.RoundToInt(Mathf.Lerp(40f, 26f, progress) * refScale);
@@ -388,7 +356,7 @@ namespace AdoFalling
 
             string first = engine.NoteCount > 0 ? engine.FirstHitTime.ToString("F3") : "n/a";
             string text = string.Format(
-                "AdoFalling  {0:F0} FPS  dt={1:F4}s  step={2:F5}s\n" +
+                "AdoFalling8K  {0:F0} FPS  dt={1:F4}s  step={2:F5}s\n" +
                 "state={3}   lead={4:F3}s   raw={5:F3}s\n" +
                 "notes={6}   holds={7}   onscreen={8}\n" +
                 "judge err={9:F0}px (avg {10:F0}, n={11})   judgeY={12:F0}",
