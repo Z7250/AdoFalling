@@ -1,9 +1,7 @@
 using System;
-using System.Globalization;
-using BepInEx.Configuration;
 using UnityEngine;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
     /// <summary>
     /// The Chinese control panel opened with F5.
@@ -24,62 +22,34 @@ namespace AdoFalling
         private Rect _window = new Rect(40f, 40f, Width, 640f);
         private Font _font;
         private bool _fontTried;
-        private bool _fontInstalled;
 
         public bool Visible;
+        private bool _colorPage;
+        private int _keyboardFrame = -1;
+        private readonly NoteColorEditor _colors = new NoteColorEditor();
+        private Vector2 _scroll;
+        private float _contentHeight = 1200f;
+        private bool _revealSelection;
 
         /// <summary>
         /// Keyboard navigation index. The game routes input through Rewired, which swallows
         /// IMGUI mouse events, so the panel must be fully usable from the keyboard.
         /// </summary>
-        private int _sel;
         private float _repeatAt;
 
-        /// <summary>Rows in navigation order: (label, kind). Built once for bounds.</summary>
-        private const int RowCount = 32;
+        private PanelControls _controls;
 
-        // Text-field buffers, mirroring the config values.
-        private string _judgeLineY = "", _noteSpeed = "", _noteHeight = "", _laneWidth = "", _laneGap = "";
-        private string _judgeOpacity = "", _noteOpacity = "", _laneOpacity = "", _laneEdge = "", _holdOpacity = "";
-        private string _leadTrim = "", _leadFraction = "", _leadIn = "", _holdTrim = "", _holdScale = "";
-        private string _fingerWindow = "";
+        internal void Configure(FallingConfig c, FallingEngine engine, GameClock clock,
+            Action loadFile, Action stopFile, Action logAlignment)
+        {
+            _controls = new PanelControls(c, delegate { engine.Retune(clock); }, engine.ResetJudgeStats,
+                loadFile, stopFile, logAlignment);
+        }
 
         public void SyncFromConfig(FallingConfig c)
         {
-            _judgeLineY = Fmt(c.JudgeLineY.Value);
-            _noteSpeed = Fmt(c.NoteSpeedPxPerSec.Value);
-            _noteHeight = Fmt(c.NoteHeight.Value);
-            _laneWidth = Fmt(c.LaneWidth.Value);
-            _laneGap = Fmt(c.LaneGap.Value);
-            _judgeOpacity = Fmt(c.JudgeOpacity.Value);
-            _noteOpacity = Fmt(c.NoteOpacity.Value);
-            _laneOpacity = Fmt(c.LaneOpacity.Value);
-            _laneEdge = Fmt(c.LaneAlpha.Value);
-            _holdOpacity = Fmt(c.HoldBodyOpacity.Value);
-            _leadTrim = Fmt(c.LeadOffsetManual.Value);
-            _leadFraction = Fmt(c.LeadFraction.Value);
-            _leadIn = Fmt(c.LeadInSeconds.Value);
-            _holdTrim = Fmt(c.HoldOffsetSeconds.Value);
-            _holdScale = Fmt(c.HoldScale.Value);
-            _fingerWindow = Fmt(c.FingeringWindowMs.Value);
-        }
-
-        private static string Fmt(float v)
-        {
-            return v.ToString("0.###", CultureInfo.InvariantCulture);
-        }
-
-        private static string Fmt(double v)
-        {
-            return v.ToString("0.###", CultureInfo.InvariantCulture);
-        }
-
-        private static float Parse(string s, float fallback)
-        {
-            float v;
-            if (float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out v))
-                return v;
-            return fallback;
+            if (_controls != null) _controls.Sync();
+            _colors.Sync(c);
         }
 
         // ---------------------------------------------------------------- font
@@ -105,7 +75,6 @@ namespace AdoFalling
                         if (f != null)
                         {
                             _font = f;
-                            _fontInstalled = true;
                             FallingPlugin.Log.LogInfo("panel font: " + installed[j]);
                             return;
                         }
@@ -127,7 +96,6 @@ namespace AdoFalling
                     if (f != null)
                     {
                         _font = f;
-                        _fontInstalled = true;
                         FallingPlugin.Log.LogInfo("panel font: " + paths[i]);
                         return;
                     }
@@ -141,13 +109,32 @@ namespace AdoFalling
         }
 
         private GUIStyle _label, _title, _section, _windowStyle;
-        private Texture2D _panelFill, _borderTex;
+        private Texture2D _panelFill, _borderTex, _swatchTex;
+        private GUISkin _skin;
+
+        internal void Dispose()
+        {
+            if (_panelFill != null) UnityEngine.Object.Destroy(_panelFill);
+            if (_borderTex != null) UnityEngine.Object.Destroy(_borderTex);
+            if (_swatchTex != null) UnityEngine.Object.Destroy(_swatchTex);
+            if (_font != null) UnityEngine.Object.Destroy(_font);
+            if (_skin != null) UnityEngine.Object.Destroy(_skin);
+            _panelFill = null;
+            _borderTex = null;
+            _swatchTex = null;
+            _font = null;
+            _skin = null;
+        }
 
         private void EnsureStyles()
         {
             EnsureFont();
             if (_label != null)
                 return;
+
+            // Keep font/style changes local so UMM and other mods retain their skin.
+            _skin = UnityEngine.Object.Instantiate(GUI.skin);
+            _skin.hideFlags = HideFlags.HideAndDontSave;
 
             _label = new GUIStyle(GUI.skin.label);
             _label.fontSize = 14;
@@ -164,6 +151,7 @@ namespace AdoFalling
             // plain style, so the outline is drawn as four thin rectangles on top.
             _panelFill = Solid(new Color(0f, 0f, 0f, 0.40f));
             _borderTex = Solid(new Color(0.55f, 0.78f, 1f, 1f));
+            _swatchTex = Solid(Color.white);
             _windowStyle = new GUIStyle(GUI.skin.window);
             _windowStyle.normal.background = _panelFill;
             _windowStyle.hover.background = _panelFill;
@@ -180,15 +168,15 @@ namespace AdoFalling
 
             if (_font != null)
             {
-                GUI.skin.button.font = _font;
-                GUI.skin.textField.font = _font;
-                GUI.skin.label.font = _font;
-                GUI.skin.box.font = _font;
-                GUI.skin.toggle.font = _font;
-                GUI.skin.window.font = _font;
+                _skin.button.font = _font;
+                _skin.textField.font = _font;
+                _skin.label.font = _font;
+                _skin.box.font = _font;
+                _skin.toggle.font = _font;
+                _skin.window.font = _font;
             }
-            GUI.skin.button.fontSize = 14;
-            GUI.skin.textField.fontSize = 14;
+            _skin.button.fontSize = 14;
+            _skin.textField.fontSize = 14;
         }
 
         // ---------------------------------------------------------------- drawing
@@ -230,129 +218,82 @@ namespace AdoFalling
         public void Draw(FallingEngine engine, FallingConfig c, GameClock clock)
         {
             EnsureStyles();
-            _engineRef = engine;
-            HandleKeyboard(c, engine);
-            _window = GUI.Window(WindowId, _window, id => Contents(engine, c), " AdoFalling 控制面板 ", _windowStyle);
-            DrawBorder();
+            GUISkin previous = GUI.skin;
+            try
+            {
+                GUI.skin = _skin;
+                _window = GUI.Window(WindowId, _window, id => Contents(engine, c), " AdoFalling8K 控制面板 ", _windowStyle);
+                DrawBorder();
+            }
+            finally { GUI.skin = previous; }
+        }
+
+        private void HandlePageKeyboard(FallingConfig c, FallingEngine engine)
+        {
+            if (Input.GetKeyDown(KeyCode.Tab)) SwitchPage(c);
+            if (!_colorPage) { HandleKeyboard(c, engine); return; }
+
+            string focused = GUI.GetNameOfFocusedControl();
+            bool typing = focused != null && focused.StartsWith("LaneNoteColor", StringComparison.Ordinal);
+            if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+            {
+                GUI.FocusControl(typing ? null : "LaneNoteColor" + _colors.Selection);
+                return;
+            }
+            if (typing) return;
+            if (Input.GetKeyDown(KeyCode.UpArrow)) _colors.Move(-1);
+            if (Input.GetKeyDown(KeyCode.DownArrow)) _colors.Move(1);
+            if (Input.GetKeyDown(KeyCode.PageUp)) _colors.MoveChannel(-1);
+            if (Input.GetKeyDown(KeyCode.PageDown)) _colors.MoveChannel(1);
+            if (Input.GetKeyDown(KeyCode.Backspace)) _colors.ResetSelected(c);
+            if (Input.GetKeyDown(KeyCode.Home)) _colors.ResetAll(c);
+            if (Input.GetKey(KeyCode.LeftArrow) || Input.GetKey(KeyCode.RightArrow))
+            {
+                if (Time.unscaledTime >= _repeatAt)
+                {
+                    _repeatAt = Time.unscaledTime + 0.06f;
+                    int direction = Input.GetKey(KeyCode.LeftArrow) ? -1 : 1;
+                    int step = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift) ? 5 : 1;
+                    _colors.Adjust(c, direction, step);
+                }
+            }
+            else _repeatAt = 0f;
+        }
+
+        private void SwitchPage(FallingConfig c)
+        {
+            _colorPage = !_colorPage;
+            GUI.FocusControl(null);
+            _repeatAt = 0f;
+            if (_colorPage) _colors.Sync(c);
         }
 
         /// <summary>
-        /// Keyboard control mirroring the mouse: arrow keys pick a row, left/right (or -/=)
-        /// change it, Enter toggles a switch, PageDown/PageUp scrolls the whole panel.
+        /// Arrow keys navigate or adjust the same controls used by the mouse.
+        /// Enter activates the selected row; scrolling keeps it visible.
         /// </summary>
         private void HandleKeyboard(FallingConfig c, FallingEngine engine)
         {
-            float now = Time.unscaledTime;
-            if (Input.GetKeyDown(KeyCode.DownArrow))
-                _sel++;
-            if (Input.GetKeyDown(KeyCode.UpArrow))
-                _sel--;
-            while (_sel < 0) _sel += RowCount;
-            _sel %= RowCount;
-
-            bool repeat = now >= _repeatAt;
+            string focused = GUI.GetNameOfFocusedControl();
+            if (focused != null && focused.StartsWith("PanelNumber", StringComparison.Ordinal))
+            {
+                if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)) GUI.FocusControl(null);
+                return;
+            }
+            if (Input.GetKeyDown(KeyCode.DownArrow)) { _controls.MoveSelection(1); _revealSelection = true; }
+            if (Input.GetKeyDown(KeyCode.UpArrow)) { _controls.MoveSelection(-1); _revealSelection = true; }
+            PanelControl row = _controls.Rows[_controls.Selection];
             if (Input.GetKey(KeyCode.LeftArrow) || Input.GetKey(KeyCode.RightArrow))
             {
-                if (repeat)
+                if (Time.unscaledTime >= _repeatAt)
                 {
-                    _repeatAt = now + 0.06f;
-                    float d = Input.GetKey(KeyCode.LeftArrow) ? -1f : 1f;
-                    Nudge(c, engine, _sel, d);
+                    _repeatAt = Time.unscaledTime + .06f;
+                    int coarse = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift) ? 5 : 1;
+                    row.Nudge(Input.GetKey(KeyCode.LeftArrow) ? -1 : 1, coarse);
                 }
             }
-            else
-            {
-                _repeatAt = 0f;
-            }
-
-            if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
-                ToggleAt(c, _sel);
-        }
-
-        private void Nudge(FallingConfig c, FallingEngine engine, int sel, float dir)
-        {
-            float coarse = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift) ? 5f : 1f;
-            switch (sel)
-            {
-                case 5: c.JudgeLineY.Value = Clamp(c.JudgeLineY.Value + dir * 0.005f * coarse, 0f, 1f); break;
-                case 6: c.LaneWidth.Value = Clamp(c.LaneWidth.Value + dir * 4f * coarse, 40f, 400f); break;
-                case 7: c.LaneGap.Value = Clamp(c.LaneGap.Value + dir * 1f * coarse, 0f, 80f); break;
-                case 8: c.NoteSpeedPxPerSec.Value = Clamp(c.NoteSpeedPxPerSec.Value + dir * 20f * coarse, 100f, 3000f); break;
-                case 9: c.NoteHeight.Value = Clamp(c.NoteHeight.Value + dir * 1f * coarse, 6f, 120f); break;
-                case 10: c.LeadOffsetManual.Value = c.LeadOffsetManual.Value + dir * 0.005f * coarse; break;
-                case 11: c.LeadFraction.Value = Clamp(c.LeadFraction.Value + dir * 0.02f * coarse, 0f, 1.5f); break;
-                case 12: c.LeadInSeconds.Value = Clamp(c.LeadInSeconds.Value + dir * 0.02f * coarse, 0f, 1f); break;
-                case 13: c.HoldOffsetSeconds.Value = c.HoldOffsetSeconds.Value + dir * 0.005f * coarse; break;
-                case 14: c.HoldScale.Value = Clamp(c.HoldScale.Value + dir * 0.02f * coarse, 0.2f, 3f); break;
-                case 15: c.JudgeOpacity.Value = Clamp(c.JudgeOpacity.Value + dir * 0.02f * coarse, 0f, 1f); break;
-                case 16: c.NoteOpacity.Value = Clamp(c.NoteOpacity.Value + dir * 0.02f * coarse, 0f, 1f); break;
-                case 17: c.LaneOpacity.Value = Clamp(c.LaneOpacity.Value + dir * 0.02f * coarse, 0f, 1f); break;
-                case 18: c.LaneAlpha.Value = Clamp(c.LaneAlpha.Value + dir * 0.02f * coarse, 0f, 1f); break;
-                case 19: c.HoldBodyOpacity.Value = Clamp(c.HoldBodyOpacity.Value + dir * 0.02f * coarse, 0f, 1f); break;
-                case 27: c.LaneMapping.Value = NextMapping(c.LaneMapping.Value); break;
-                case 28: c.FingeringWindowMs.Value = Clamp(c.FingeringWindowMs.Value + dir * 5f * coarse, 60f, 400f); break;
-                case 0: case 1: case 2: case 3: case 4:
-                case 20: case 21: case 22: case 23: case 24: case 25: case 26:
-                    ToggleAt(c, sel);
-                    break;
-                default: break;   // 29..31 are actions: Enter triggers them, arrows do not
-            }
-            c.LeadOffsetManual.Value = (float)Math.Round(c.LeadOffsetManual.Value, 3);
-            c.HoldOffsetSeconds.Value = (float)Math.Round(c.HoldOffsetSeconds.Value, 3);
-            SyncFromConfig(c);
-            engine.Retune(_clockRef);
-        }
-
-        private void ToggleAt(FallingConfig c, int sel)
-        {
-            switch (sel)
-            {
-                case 0: c.ShowJudgeLine.Value = !c.ShowJudgeLine.Value; break;
-                case 1: c.ShowLanes.Value = !c.ShowLanes.Value; break;
-                case 2: c.ShowNotes.Value = !c.ShowNotes.Value; break;
-                case 3: c.ShowHitEffects.Value = !c.ShowHitEffects.Value; break;
-                case 4: c.ShowJudgeText.Value = !c.ShowJudgeText.Value; break;
-                case 20: c.HoldShrinkWhileHeld.Value = !c.HoldShrinkWhileHeld.Value; break;
-                case 21: c.SkipHoldReleaseTiles.Value = !c.SkipHoldReleaseTiles.Value; break;
-                case 22: c.CountdownLead.Value = !c.CountdownLead.Value; break;
-                case 23: c.NoteRotation.Value = !c.NoteRotation.Value; break;
-                case 24: c.MirrorDirection.Value = !c.MirrorDirection.Value; break;
-                case 25: c.DebugHud.Value = !c.DebugHud.Value; break;
-                case 26: c.AutoPlay.Value = !c.AutoPlay.Value; break;
-                case 27: c.LaneMapping.Value = NextMapping(c.LaneMapping.Value); break;
-                case 28: c.FingeringWindowMs.Value = FingeringPlanner.DefaultWindowMs; break;
-                case 29: RestoreDefaults(c); SyncFromConfig(c); _engineRef.Retune(_clockRef); break;
-                case 30:
-                    c.HoldOffsetSeconds.Value = 0f; c.HoldScale.Value = 1f; SyncFromConfig(c);
-                    _engineRef.Retune(_clockRef);
-                    break;
-                case 31: _engineRef.ResetJudgeStats(); break;
-            }
-        }
-
-        /// <summary>Cycle the lane mapping; the chart re-lanes on the next frame.</summary>
-        private static LaneMapping NextMapping(LaneMapping m)
-        {
-            switch (m)
-            {
-                case LaneMapping.Fingering: return LaneMapping.Macro;
-                case LaneMapping.Macro: return LaneMapping.Position;
-                case LaneMapping.Position: return LaneMapping.Cycle;
-                case LaneMapping.Cycle: return LaneMapping.Sequential;
-                default: return LaneMapping.Fingering;
-            }
-        }
-
-        private static string LaneMappingName(LaneMapping m)
-        {
-            switch (m)
-            {
-                case LaneMapping.Fingering: return "人性化（轮指/交替）";
-                case LaneMapping.Macro: return "宏排键（谱面文件）";
-                case LaneMapping.Position: return "按进入方向";
-                case LaneMapping.Cycle: return "按序号循环";
-                default: return "按顺序";
-            }
+            else _repeatAt = 0;
+            if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)) row.Activate();
         }
 
         /// <summary>One line about the chart-file plan, shown in the 排键 section.</summary>
@@ -362,7 +303,7 @@ namespace AdoFalling
             if (plan == null)
             {
                 if (!string.IsNullOrEmpty(c.FilePath.Value))
-                    return "谱面文件：未载入（进关卡按 F 开始）";
+                    return "谱面文件：未载入，请使用面板载入";
                 return "谱面文件：未配置（Chart/FilePath）";
             }
 
@@ -373,134 +314,131 @@ namespace AdoFalling
 
             if (MacroPlan.Active)
                 return string.Format("谱面文件：已开始 {0}（锚点 {1:F2}s）", name, MacroPlan.AnchorSongTime);
-            return "谱面文件：已载入 " + name + "，按 F 开始";
+            return "谱面文件：已载入 " + name + "，使用面板开始";
         }
-
-        private static float Clamp(float v, float lo, float hi)
-        {
-            return v < lo ? lo : (v > hi ? hi : v);
-        }
-
-        private static double Clamp(double v, double lo, double hi)
-        {
-            return v < lo ? lo : (v > hi ? hi : v);
-        }
-
-        private FallingEngine _engineRef;
 
         private void Contents(FallingEngine engine, FallingConfig c)
         {
-            float y = 32f;
+            // Resolve named text controls in this window, once per frame.
+            if (_keyboardFrame != Time.frameCount)
+            {
+                _keyboardFrame = Time.frameCount;
+                HandlePageKeyboard(c, engine);
+            }
+            if (Event.current.type == EventType.KeyDown && (Event.current.keyCode == KeyCode.Tab
+                || _colorPage && (Event.current.keyCode == KeyCode.Return || Event.current.keyCode == KeyCode.KeypadEnter)))
+                Event.current.Use();
+            GUI.Label(new Rect(16f, 32f, 245f, 25f), _colorPage ? "轨道音符颜色" : "显示与指法参数", _section);
+            if (GUI.Button(new Rect(300f, 30f, 154f, 25f), _colorPage ? "参数页 (Tab)" : "轨道颜色 (Tab)"))
+                SwitchPage(c);
+            if (_colorPage) { ColorContents(c); return; }
+            _window.height = Math.Max(240f, Math.Min(Screen.height - 60f, _contentHeight + 90f));
+            float viewport = _window.height - 90f;
+            _scroll = GUI.BeginScrollView(new Rect(0f, 60f, Width, viewport), _scroll,
+                new Rect(0f, 0f, Width - 20f, _contentHeight));
+            float y = 0f;
             const float rowH = 25f;
             const float labelW = 150f;
             const float fieldW = 62f;
             const float sliderW = Width - labelW - fieldW - 62f;
 
-            y = Section(y, "显示（一键切换）");
-            y = Toggle(y, rowH, "显示判定线", c.ShowJudgeLine);
-            y = Toggle(y, rowH, "显示轨道", c.ShowLanes);
-            y = Toggle(y, rowH, "显示音符 / 长按", c.ShowNotes);
-            y = Toggle(y, rowH, "显示打击特效", c.ShowHitEffects);
-            y = Toggle(y, rowH, "显示判定文字", c.ShowJudgeText);
-
-            y = Section(y, "判定线与轨道");
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "判定线高度", c.JudgeLineY, 0f, 1f, ref _judgeLineY);
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "轨道宽度", c.LaneWidth, 40f, 400f, ref _laneWidth);
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "轨道间距", c.LaneGap, 0f, 80f, ref _laneGap);
-
-            y = Section(y, "音符");
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "下落速度", c.NoteSpeedPxPerSec, 100f, 3000f, ref _noteSpeed);
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "音符高度", c.NoteHeight, 6f, 120f, ref _noteHeight);
-
-            y = Section(y, "对齐（判定与视觉）");
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "音符提前量(秒)", c.LeadOffsetManual, -0.5f, 0.5f, ref _leadTrim);
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "提前量系数", c.LeadFraction, 0f, 1.5f, ref _leadFraction);
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "开场余量(秒)", c.LeadInSeconds, 0f, 1f, ref _leadIn);
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "长按提前量(秒)", c.HoldOffsetSeconds, -0.5f, 0.5f, ref _holdTrim);
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "长按长度系数", c.HoldScale, 0.2f, 3f, ref _holdScale);
-
-            y = Section(y, "透明度");
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "判定线", c.JudgeOpacity, 0f, 1f, ref _judgeOpacity);
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "音符", c.NoteOpacity, 0f, 1f, ref _noteOpacity);
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "轨道底色", c.LaneOpacity, 0f, 1f, ref _laneOpacity);
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "轨道边框", c.LaneAlpha, 0f, 1f, ref _laneEdge);
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "长按尾迹", c.HoldBodyOpacity, 0f, 1f, ref _holdOpacity);
-
-            y = Section(y, "行为开关");
-            y = Toggle(y, rowH, "长按：按住期间缩短", c.HoldShrinkWhileHeld);
-            y = Toggle(y, rowH, "长按：跳过松手方块", c.SkipHoldReleaseTiles);
-            y = Toggle(y, rowH, "开场从顶端下落", c.CountdownLead);
-            y = Toggle(y, rowH, "音符倾斜", c.NoteRotation);
-            y = Toggle(y, rowH, "轨道右到左", c.MirrorDirection);
-            y = Toggle(y, rowH, "显示诊断信息", c.DebugHud);
-            y = Toggle(y, rowH, "自动播放（游戏自演）", c.AutoPlay);
-
-            y = Section(y, "排键 / 轨道映射");
-            y = Choice(y, rowH, "排键方式", c.LaneMapping);
-            y = Slider(y, rowH, labelW, sliderW, fieldW, "轮指窗口(毫秒)", c.FingeringWindowMs, 60f, 400f, ref _fingerWindow);
-            y = Key(y, "人性化 = 快速连打轮指、较慢音符两指交替（永不连压同轨）");
-            y = Key(y, MacroPlanSummary(c));
-            y = Key(y, "宏排键需要 Chart/FilePath 里的谱面文件；按 F 载入并切换");
-
-            y = Section(y, "操作");
-            float bw = (Width - 60f) / 3f;
-            if (GUI.Button(new Rect(20f, y, bw, 26f), "恢复默认", _label))
+            string section = null;
+            for (int index = 0; index < _controls.Rows.Count; index++)
             {
-                RestoreDefaults(c);
-                SyncFromConfig(c);
-                engine.Retune(_clockRef);
-                engine.ResetJudgeStats();
+                PanelControl row = _controls.Rows[index];
+                if (section != row.Section)
+                {
+                    if (section == "八轨指法") y = Key(y, "指法基准：" + engine.FingeringReference);
+                    section = row.Section;
+                    y = Section(y, section);
+                    if (section == "文件谱面") y = Key(y, MacroPlanSummary(c));
+                }
+                if (index == _controls.Selection)
+                {
+                    GUI.Label(new Rect(4f, y, 12f, rowH), ">", _label);
+                    if (_revealSelection)
+                    {
+                        if (y < _scroll.y) _scroll.y = y;
+                        else if (y + rowH > _scroll.y + viewport) _scroll.y = y + rowH - viewport;
+                    }
+                }
+                y = DrawControl(row, index, y, rowH, labelW, sliderW, fieldW);
             }
-            if (GUI.Button(new Rect(20f + bw + 10f, y, bw, 26f), "长按归零", _label))
-            {
-                c.HoldOffsetSeconds.Value = 0f;
-                c.HoldScale.Value = 1f;
-                SyncFromConfig(c);
-            }
-            if (GUI.Button(new Rect(20f + (bw + 10f) * 2f, y, bw, 26f), "清除统计数据", _label))
-            {
-                engine.ResetJudgeStats();
-            }
-            y += 32f;
+            y += 8f;
 
             y = Note(y, "对齐实测：最近 {0:F0}px  平均 {1:F0}px  样本 {2}   {3}",
                 engine.JudgeOffsetPx, engine.JudgeAvgPx, engine.JudgeSamples, Verdict(engine));
             y = Note(y, "音符 {0}   长按 {1}   屏上 {2}   判定线 y={3:F0}",
                 engine.NoteCount, engine.HoldCount, engine.VisibleCount, engine.JudgeLineY);
-            y = Key(y, "键盘（本游戏会吞掉鼠标点击，请用键盘）：" + RowName(_sel) +
+            y = Key(y, "键盘（本游戏会吞掉鼠标点击，请用键盘）：" + (_controls.Selection + 1) + " " + _controls.Rows[_controls.Selection].Label +
                        "   ↑↓ 选择   ←→ 调整(Shift 加速)   Enter 切换");
             y = Key(y, "关闭面板（F5）自动保存；鼠标若可用也可直接点");
-            y = Key(y, "提示：判定线/音符显隐在最后两行，Enter 即可一键切换");
 
-            _window.height = y + 34f;
+            _contentHeight = y + 34f;
+            _revealSelection = false;
+            GUI.EndScrollView();
             GUI.DragWindow(new Rect(0f, 0f, Width, 26f));
         }
 
-        /// <summary>Rows in navigation order, for the keyboard hint.</summary>
-        private static string RowName(int sel)
+        private void ColorContents(FallingConfig c)
         {
-            string[] names =
+            float y = 66f;
+            GUI.Label(new Rect(64f, y, 178f, 22f), "普通色", _section);
+            GUI.Label(new Rect(256f, y, 178f, 22f), "组首音高亮色", _section);
+            y += 26f;
+            for (int lane = 0; lane < 8; lane++)
             {
-                "显示→判定线", "显示→轨道", "显示→音符", "显示→打击特效", "显示→判定文字",
-                "判定线高度", "轨道宽度", "轨道间距",
-                "下落速度", "音符高度",
-                "音符提前量", "提前量系数", "开场余量", "长按提前量", "长按长度系数",
-                "透明度→判定线", "透明度→音符", "透明度→轨道底色", "透明度→轨道边框", "透明度→长按尾迹",
-                "开关→长按缩短", "开关→跳过松手方块", "开关→开场从顶端", "开关→音符倾斜",
-                "开关→轨道右到左", "开关→诊断信息", "开关→自动播放",
-                "排键方式", "轮指窗口(毫秒)",
-                "操作→恢复默认", "操作→长按归零", "操作→清除统计",
-            };
-            if (sel < 0 || sel >= names.Length)
-                return "?";
-            return "[" + (sel + 1) + "] " + names[sel];
+                GUI.Label(new Rect(22f, y, 30f, 25f), FingeringPlanner.Keys[lane].ToString(), _title);
+                ColorCell(c, lane * 2, 64f, y);
+                ColorCell(c, lane * 2 + 1, 256f, y);
+                y += 30f;
+            }
+            GUI.Label(new Rect(22f, y, 190f, 25f), "多押统一色", _section);
+            ColorCell(c, NoteColorEditor.ChordColorIndex, 256f, y);
+            y += 40f;
+            string selected = _colors.Selection == NoteColorEditor.ChordColorIndex ? "多押统一色"
+                : FingeringPlanner.Keys[_colors.Selection / 2] + (_colors.Selection % 2 == 1 ? " 高亮色" : " 普通色");
+            y = Section(y, "当前：" + selected);
+            string[] channels = { "R", "G", "B", "A" };
+            for (int channel = 0; channel < 4; channel++)
+            {
+                Color color = _colors.SelectedColor(c);
+                float[] values = { color.r, color.g, color.b, color.a };
+                int current = Mathf.RoundToInt(values[channel] * 255f);
+                if (GUI.Button(new Rect(20f, y, 80f, 25f), (_colors.Channel == channel ? "> " : "") + channels[channel] + " " + current))
+                    _colors.Channel = channel;
+                int value = Mathf.RoundToInt(GUI.HorizontalSlider(new Rect(112f, y + 8f, 324f, 16f), current, 0f, 255f));
+                if (value != current) { _colors.Channel = channel; _colors.SetComponent(c, channel, value); }
+                y += 28f;
+            }
+            Color parsed;
+            if (!FallingConfig.TryParseNoteColor(_colors.Text[_colors.Selection], out parsed))
+                y = Key(y, "颜色格式未完成，暂时保留上一次有效颜色");
+            else y = Key(y, "HEX: #RRGGBB[AA] 或 RGB: 255,0,0[,255]");
+            y = Key(y, "上下选颜色；左右调分量；Shift 加速");
+            y = Key(y, "PageUp/Down 选 RGBA；Enter 开始/结束输入");
+            y = Key(y, "Backspace 重置当前色；Home 重置全部颜色");
+            y = Key(y, "Tab 返回参数页；" + "F5 关闭并保存；修改即时生效");
+            _window.height = y + 24f;
+            GUI.DragWindow(new Rect(0f, 0f, Width, 26f));
         }
 
-        private GameClock _clockRef;
-
-        public void SetClock(GameClock clock)
+        private void ColorCell(FallingConfig c, int index, float x, float y)
         {
-            _clockRef = clock;
+            if (index == _colors.Selection) GUI.Label(new Rect(x - 12f, y, 12f, 25f), ">", _label);
+            Rect swatch = new Rect(x, y + 2f, 24f, 22f);
+            Color previous = GUI.color;
+            GUI.color = index == NoteColorEditor.ChordColorIndex ? c.ChordColorValue : c.NoteColorFor(index / 2, index % 2 == 1);
+            GUI.DrawTexture(swatch, _swatchTex);
+            GUI.color = previous;
+            if (GUI.Button(swatch, "", GUIStyle.none)) _colors.Selection = index;
+            GUI.SetNextControlName("LaneNoteColor" + index);
+            string text = GUI.TextField(new Rect(x + 30f, y, 148f, 25f), _colors.Text[index] ?? "", 24);
+            if (text != _colors.Text[index])
+            {
+                _colors.Selection = index;
+                _colors.ApplyText(c, index, text);
+            }
         }
 
         private float Section(float y, string title)
@@ -509,84 +447,24 @@ namespace AdoFalling
             return y + 22f;
         }
 
-        private float Toggle(float y, float rowH, string label, ConfigEntry<bool> entry)
+        private float DrawControl(PanelControl row, int index, float y, float rowH,
+            float labelW, float sliderW, float fieldW)
         {
-            // Draw an explicit tick / cross: the stock toggle box alone is easy to misread.
-            bool on = entry.Value;
-            GUIStyle mark = new GUIStyle(_label);
-            mark.fontSize = 16;
-            mark.fontStyle = FontStyle.Bold;
-            mark.normal.textColor = on ? new Color(0.35f, 1f, 0.45f, 1f)
-                                       : new Color(1f, 0.42f, 0.38f, 1f);
-
-            bool v = GUI.Toggle(new Rect(24f, y, 300f, rowH), on, " " + label, _label);
-            if (v != on)
-                entry.Value = v;
-
-            // Written in Chinese on purpose: CJK glyphs are guaranteed to be in the panel font,
-            // whereas ✓ / ✗ may be missing and would show up as boxes.
-            GUI.Label(new Rect(24f + labelWForToggle, y, 40f, rowH), on ? "[开]" : "[关]", mark);
-            return y + rowH;
-        }
-
-        private const float labelWForToggle = 214f;
-
-        /// <summary>A one-line selector: click (or Enter / arrow keys) to cycle the value.</summary>
-        private float Choice(float y, float rowH, string label, ConfigEntry<LaneMapping> entry)
-        {
-            GUI.Label(new Rect(16f, y, labelWForToggle, rowH), label, _label);
-            if (GUI.Button(new Rect(24f + labelWForToggle, y, 200f, rowH),
-                    LaneMappingName(entry.Value), _label))
-                entry.Value = NextMapping(entry.Value);
-            return y + rowH;
-        }
-
-        private float Slider(float y, float rowH, float labelW, float sliderW, float fieldW,            string label, ConfigEntry<float> entry, float min, float max, ref string text)
-        {
-            if (Mark(y, rowH))
-                GUI.Label(new Rect(6f, y, 8f, rowH), "▶", _label);
-            GUI.Label(new Rect(16f, y, labelW, rowH), label, _label);
-
-            float v = GUI.HorizontalSlider(new Rect(16f + labelW, y + 8f, sliderW, 16f), entry.Value, min, max);
-            if (Math.Abs(v - entry.Value) > 0.00001f)
+            if (row.Kind != PanelControlKind.Number)
             {
-                entry.Value = v;
-                text = Fmt(v);
+                string text = row.Label + (row.Display != null ? "  " + row.Display() : "");
+                if (GUI.Button(new Rect(16f, y, Width - 52f, rowH), text, _label))
+                { _controls.Selection = index; row.Activate(); }
+                return y + rowH;
             }
-
-            string typed = GUI.TextField(new Rect(16f + labelW + sliderW + 8f, y, fieldW, rowH), text, 12, _label);
-            if (!string.Equals(typed, text, StringComparison.Ordinal))
-            {
-                text = typed;
-                float parsed = Parse(typed, entry.Value);
-                if (parsed < min) parsed = min;
-                if (parsed > max) parsed = max;
-                entry.Value = parsed;
-            }
-            return y + rowH;
-        }
-
-        private float Slider(float y, float rowH, float labelW, float sliderW, float fieldW,
-            string label, ConfigEntry<double> entry, float min, float max, ref string text)
-        {
-            GUI.Label(new Rect(16f, y, labelW, rowH), label, _label);
-
-            float v = GUI.HorizontalSlider(new Rect(16f + labelW, y + 8f, sliderW, 16f), (float)entry.Value, min, max);
-            if (Math.Abs(v - entry.Value) > 0.00001f)
-            {
-                entry.Value = v;
-                text = Fmt(v);
-            }
-
-            string typed = GUI.TextField(new Rect(16f + labelW + sliderW + 8f, y, fieldW, rowH), text, 12, _label);
-            if (!string.Equals(typed, text, StringComparison.Ordinal))
-            {
-                text = typed;
-                double parsed = Parse(typed, (float)entry.Value);
-                if (parsed < min) parsed = min;
-                if (parsed > max) parsed = max;
-                entry.Value = parsed;
-            }
+            GUI.Label(new Rect(16f, y, labelW, rowH), row.Label, _label);
+            float value = GUI.HorizontalSlider(new Rect(16f + labelW, y + 8f, sliderW, 16f),
+                (float)row.Number(), (float)row.Min, (float)row.Max);
+            if (Math.Abs(value - row.Number()) > .00001)
+            { _controls.Selection = index; row.SetNumber(value); row.Sync(); }
+            GUI.SetNextControlName("PanelNumber" + index);
+            string typed = GUI.TextField(new Rect(16f + labelW + sliderW + 8f, y, fieldW, rowH), row.Text, 20, _label);
+            if (typed != row.Text) { _controls.Selection = index; row.ApplyText(typed); }
             return y + rowH;
         }
 
@@ -611,12 +489,6 @@ namespace AdoFalling
             return y + 19f;
         }
 
-        /// <summary>True when this row is the one the keyboard is pointing at.</summary>
-        private bool Mark(float y, float rowH)
-        {
-            return false;
-        }
-
         private static string Verdict(FallingEngine engine)
         {
             if (engine.JudgeSamples < 5)
@@ -627,34 +499,5 @@ namespace AdoFalling
             return avg > 0f ? "音符偏晚 → 减小提前量" : "音符偏早 → 增大提前量";
         }
 
-        /// <summary>The calibrated defaults this build ships with.</summary>
-        private static void RestoreDefaults(FallingConfig c)
-        {
-            c.JudgeLineY.Value = 0.18f;
-            c.NoteSpeedPxPerSec.Value = 620f;
-            c.NoteHeight.Value = 26f;
-            c.LaneWidth.Value = 110f;
-            c.LaneGap.Value = 8f;
-            c.JudgeOpacity.Value = 1f;
-            c.NoteOpacity.Value = 1f;
-            c.LaneOpacity.Value = 0.18f;
-            c.LaneAlpha.Value = 0.7f;
-            c.HoldBodyOpacity.Value = 0.45f;
-            c.LeadOffsetManual.Value = 0.07;
-            c.LeadFraction.Value = 0.0;
-            c.LeadInSeconds.Value = 0.35;
-            c.HoldOffsetSeconds.Value = 0.0;
-            c.HoldScale.Value = 1.0;
-            c.HoldShrinkWhileHeld.Value = true;
-            c.SkipHoldReleaseTiles.Value = true;
-            c.CountdownLead.Value = true;
-            c.LaneMapping.Value = LaneMapping.Fingering;
-            c.FingeringWindowMs.Value = FingeringPlanner.DefaultWindowMs;
-            c.ShowJudgeLine.Value = true;
-            c.ShowLanes.Value = true;
-            c.ShowNotes.Value = true;
-            c.ShowHitEffects.Value = true;
-            c.ShowJudgeText.Value = true;
-        }
     }
 }

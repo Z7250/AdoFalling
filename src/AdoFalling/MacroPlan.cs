@@ -2,26 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Reflection;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json.Linq;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
     /// <summary>
-    /// ReADOFAIMacro's fingering plan, computed from an .adofai chart file with the exact
-    /// algorithm the macro uses:
-    ///
-    ///   rotation angles -> twirl / pause / SetSpeed processing -> BPM normalisation ->
-    ///   groups of presses whose travel reaches one beat -> per-hand finger allocation
-    ///
-    /// The result is one lane per chart tile, so the plan is matched to the overlay's notes
-    /// through their seqID (no timing alignment needed). Key differences from the live
-    /// approximation in <see cref="FingeringPlanner"/> are the event handling (Twirl/Pause/
-    /// SetSpeed) and the angle-space grouping, which is why a file is used.
-    ///
-    /// Load it with the load key (F by default) from the path in Chart/FilePath; if no plan
-    /// is loaded, LaneMapping=Macro falls back to the built-in human allocator.
+    /// File chart timing adapted from ReADOFAIMacro: rotation angles -> Twirl / Pause /
+    /// SetSpeed -> cumulative press times. Per-press local tempo is retained separately
+    /// so live and file charts can use the same eight-key hand-group allocator.
     /// </summary>
     internal sealed class MacroPlan
     {
@@ -33,11 +22,13 @@ namespace AdoFalling
         public string FilePath = "";
         public int FloorCount;
         public int PlannedPresses;
-        public int RollGroups;
         public double LevelBpm;
 
         /// <summary>Press times in seconds, measured from the first press (time 0).</summary>
         public double[] PressTimes;
+
+        /// <summary>Local quarter-note duration for each press, before BPM normalisation.</summary>
+        public double[] PressBeatSeconds;
 
         /// <summary>Chart tile (seqID) each press belongs to. The first press is tile 1:
         /// tile 0 is the starting tile the macro does not press (it counts the activation
@@ -55,18 +46,8 @@ namespace AdoFalling
             get { return PressTimes != null ? PressTimes.Length : 0; }
         }
 
-        private int[] _laneBySeqId;
-
         private MacroPlan()
         {
-        }
-
-        /// <summary>Lane for a chart tile, or -1 when the plan has no press for it.</summary>
-        public int LaneForSeq(int seqId)
-        {
-            if (_laneBySeqId == null || seqId < 0 || seqId >= _laneBySeqId.Length)
-                return -1;
-            return _laneBySeqId[seqId];
         }
 
         /// <summary>
@@ -117,8 +98,6 @@ namespace AdoFalling
 
         private static MacroPlan Parse(string path)
         {
-            EnsureJsonAssembly();
-
             string text = File.ReadAllText(path);
             text = Regex.Replace(text, @",\s*([}\]])", "$1");
             JObject root = JObject.Parse(text);
@@ -126,28 +105,20 @@ namespace AdoFalling
             MacroPlan plan = new MacroPlan();
             JToken settings = root["settings"];
             plan.LevelBpm = settings != null ? ToDouble(settings["bpm"], 150.0) : 150.0;
+            if (plan.LevelBpm <= 0.0 || double.IsNaN(plan.LevelBpm) || double.IsInfinity(plan.LevelBpm))
+                throw new FormatException("Chart BPM must be a positive finite number.");
 
             double[] angleData = ReadAngles(root);
             plan.FloorCount = angleData.Length + 1;
 
             List<double> rot = ComputeRotationAngles(angleData);
 
-            List<string> actionTypes = new List<string>();
-            List<int> actionFloors = new List<int>();
-            List<double> actionA = new List<double>();
-            List<double> actionB = new List<double>();
-            ReadActions(root, actionTypes, actionFloors, actionA, actionB);
-
-            ProcessTwirl(rot, angleData, actionTypes, actionFloors);
-            ProcessPause(rot, angleData, actionTypes, actionFloors, actionA);
+            List<ChartAction> actions = ReadActions(root);
+            ProcessTwirl(rot, angleData, actions);
+            ProcessPause(rot, angleData, actions);
             double baseBpm = NormalizeBpm(plan.LevelBpm);
-            ProcessSetSpeed(rot, angleData, actionTypes, actionFloors, actionA, actionB,
+            ProcessSetSpeed(rot, angleData, actions,
                 baseBpm, plan.LevelBpm);
-
-            // The macro starts on the off hand when the first interval is 2.5..3.5 beats.
-            bool preferred = true;
-            if (rot.Count > 0 && rot[0] >= 450.0 && rot[0] <= 630.0)
-                preferred = false;
 
             RemoveMidSpins(rot, angleData);
             if (rot.Count > 0)
@@ -160,85 +131,64 @@ namespace AdoFalling
             for (int i = 0; i < rot.Count; i++)
                 pressTimes[i + 1] = pressTimes[i] + rot[i] / 180.0 * 60.0 / baseBpm;
 
-            if (rot.Count > 0)
-                rot.Add(rot[rot.Count - 1]); // sentinel, so the last group can close
-
-            int[] laneBySeqId = new int[plan.FloorCount];
-            for (int i = 0; i < laneBySeqId.Length; i++)
-                laneBySeqId[i] = -1;
-
             List<int> playable = new List<int>();
             for (int f = 0; f < plan.FloorCount; f++)
                 if (!IsMidSpin(angleData, f))
                     playable.Add(f);
 
-            int pressIndex = 0;
-            int rollGroups = 0;
-            int i2 = 0;
-            while (i2 < rot.Count)
-            {
-                int span = 0;
-                double acc = 0.0;
-                do
-                {
-                    acc += rot[i2 + span];
-                    span++;
-                } while (acc < 180.0 && i2 + span < rot.Count);
-
-                for (int j = 0; j < span; j++)
-                {
-                    int tile = pressIndex + 1;
-                    if (tile < playable.Count)
-                        laneBySeqId[playable[tile]] = LaneForFinger(preferred, span, j);
-                    pressIndex++;
-                }
-                if (span > 1)
-                    rollGroups++;
-
-                if (span <= 8)
-                {
-                    if (acc <= 270.0)
-                        preferred = !preferred;
-                    else if (acc <= 450.0) { }
-                    else if (acc <= 630.0)
-                        preferred = !preferred;
-                    else if (acc < 720.0) { }
-                    else
-                        preferred = true;
-                }
-                i2 += span;
-            }
-
-            int presses = Math.Min(pressIndex, pressTimes.Length);
+            double[] beatByFloor = ReadBeatSeconds(plan.FloorCount, plan.LevelBpm, actions);
+            int presses = Math.Min(Math.Max(0, playable.Count - 1), pressTimes.Length);
             plan.PlannedPresses = presses;
-            plan.RollGroups = rollGroups;
             plan.PressTimes = new double[presses];
             plan.PressSeqIds = new int[presses];
+            plan.PressBeatSeconds = new double[presses];
             for (int k = 0; k < presses; k++)
             {
                 plan.PressTimes[k] = pressTimes[k];
                 int tile = k + 1;
                 plan.PressSeqIds[k] = tile < playable.Count ? playable[tile] : -1;
+                plan.PressBeatSeconds[k] = beatByFloor[plan.PressSeqIds[k]];
             }
-            plan._laneBySeqId = laneBySeqId;
             plan.Status = string.Format(
                 CultureInfo.InvariantCulture,
-                "{0} tiles, {1} presses planned ({2} rolls), {3:F0} bpm (normalised {4:F0}), {5:F1}s",
-                plan.FloorCount, plan.PlannedPresses, plan.RollGroups, plan.LevelBpm, baseBpm,
+                "{0} tiles, {1} presses, {2:F0} bpm (normalised {3:F0}), {4:F1}s",
+                plan.FloorCount, plan.PlannedPresses, plan.LevelBpm, baseBpm,
                 pressTimes.Length > 0 ? pressTimes[pressTimes.Length - 1] : 0.0);
             return plan;
         }
 
-        private static void EnsureJsonAssembly()
+        private enum ActionKind { Twirl, Pause, Speed }
+        private struct ChartAction
         {
-            try
+            public ActionKind Kind;
+            public int Floor;
+            public double Value;
+            public bool ByBpm;
+        }
+
+        private static double[] ReadBeatSeconds(int count, double bpm, List<ChartAction> actions)
+        {
+            var events = new List<ChartAction>[count];
+            foreach (ChartAction action in actions)
             {
-                Assembly.Load("Newtonsoft.Json");
+                if (action.Kind != ActionKind.Speed || action.Floor < 0 || action.Floor >= count) continue;
+                if (events[action.Floor] == null) events[action.Floor] = new List<ChartAction>();
+                events[action.Floor].Add(action);
             }
-            catch
+            double[] beats = new double[count];
+            for (int floor = 0; floor < count; floor++)
             {
-                // already loaded by the game, or resolvable by the runtime
+                if (events[floor] != null)
+                    foreach (ChartAction action in events[floor])
+                    {
+                        double next = action.ByBpm ? action.Value : bpm * action.Value;
+                        if (next <= 0.0 || double.IsNaN(next) || double.IsInfinity(next))
+                            throw new FormatException("SetSpeed must produce a positive finite BPM.");
+                        bpm = next;
+                    }
+                beats[floor] = 60.0 / bpm;
             }
+            return beats;
         }
 
         private static double[] ReadAngles(JObject root)
@@ -311,42 +261,26 @@ namespace AdoFalling
             }
         }
 
-        private static void ReadActions(JObject root, List<string> types, List<int> floors,
-            List<double> a, List<double> b)
+        private static List<ChartAction> ReadActions(JObject root)
         {
+            var result = new List<ChartAction>();
             JArray actions = root["actions"] as JArray;
-            if (actions == null)
-                return;
-            for (int i = 0; i < actions.Count; i++)
+            if (actions == null) return result;
+            foreach (JToken token in actions)
             {
-                JObject action = actions[i] as JObject;
-                if (action == null)
-                    continue;
+                JObject action = token as JObject;
+                if (action == null) continue;
                 string type = action["eventType"] != null ? action["eventType"].ToString() : "";
-                if (type != "SetSpeed" && type != "Twirl" && type != "Pause")
-                    continue;
-
-                types.Add(type);
-                floors.Add(ToInt(action["floor"], 0));
-
-                double first = 0.0;
-                double second = 0.0;
-                if (type == "SetSpeed")
-                {
-                    bool byBpm = action["speedType"] != null
-                                 && action["speedType"].ToString() == "Bpm";
-                    first = byBpm
-                        ? ToDouble(action["beatsPerMinute"], 0.0)
-                        : ToDouble(action["bpmMultiplier"], 1.0);
-                    second = byBpm ? 1.0 : 0.0;   // marker: 1 = "Bpm", 0 = "Multiplier"
-                }
-                else if (type == "Pause")
-                {
-                    first = ToDouble(action["duration"], 0.0);
-                }
-                a.Add(first);
-                b.Add(second);
+                if (type != "SetSpeed" && type != "Twirl" && type != "Pause") continue;
+                bool byBpm = action["speedType"] != null && action["speedType"].ToString() == "Bpm";
+                result.Add(new ChartAction {
+                    Kind = type == "SetSpeed" ? ActionKind.Speed : type == "Twirl" ? ActionKind.Twirl : ActionKind.Pause,
+                    Floor = ToInt(action["floor"], 0), ByBpm = byBpm,
+                    Value = type == "SetSpeed" ? ToDouble(action[byBpm ? "beatsPerMinute" : "bpmMultiplier"], byBpm ? 0 : 1)
+                        : type == "Pause" ? ToDouble(action["duration"], 0) : 0
+                });
             }
+            return result;
         }
 
         // ------------------------------------------------------------------ the algorithm
@@ -406,24 +340,24 @@ namespace AdoFalling
         }
 
         private static void ProcessTwirl(List<double> rot, double[] angleData,
-            List<string> types, List<int> floors)
+            List<ChartAction> actions)
         {
             bool twirled = false;
             int lastFloor = 0;
             List<int> lo = new List<int>();
             List<int> hi = new List<int>();
 
-            for (int i = 0; i < types.Count; i++)
+            for (int i = 0; i < actions.Count; i++)
             {
-                if (types[i] != "Twirl")
+                if (actions[i].Kind != ActionKind.Twirl)
                     continue;
                 if (twirled)
                 {
                     lo.Add(lastFloor);
-                    hi.Add(floors[i]);
+                    hi.Add(actions[i].Floor);
                 }
                 twirled = !twirled;
-                lastFloor = floors[i];
+                lastFloor = actions[i].Floor;
             }
 
             for (int r = 0; r < lo.Count; r++)
@@ -437,57 +371,44 @@ namespace AdoFalling
         }
 
         private static void ProcessPause(List<double> rot, double[] angleData,
-            List<string> types, List<int> floors, List<double> a)
+            List<ChartAction> actions)
         {
-            for (int i = 0; i < types.Count; i++)
+            for (int i = 0; i < actions.Count; i++)
             {
-                if (types[i] != "Pause")
+                if (actions[i].Kind != ActionKind.Pause)
                     continue;
-                int floor = floors[i];
+                int floor = actions[i].Floor;
                 if (floor < rot.Count && !IsMidSpin(angleData, floor + 1))
-                    rot[floor] += a[i] * 180.0;
+                    rot[floor] += actions[i].Value * 180.0;
             }
         }
 
         private static void ProcessSetSpeed(List<double> rot, double[] angleData,
-            List<string> types, List<int> floors, List<double> a, List<double> b,
+            List<ChartAction> actions,
             double baseBpm, double levelBpm)
         {
             // Rebuild the macro's speedList: ranges where one SetSpeed setting is in effect.
             List<int> lo = new List<int>();
             List<int> hi = new List<int>();
             List<double> bpm = new List<double>();
-            List<double> mult = new List<double>();
 
             int floorCount = angleData.Length + 1;
             int lastFloor = 0;
             double lastBpm = levelBpm;
-            double multiplier = 1.0;
-            for (int i = 0; i < types.Count; i++)
+            for (int i = 0; i < actions.Count; i++)
             {
-                if (types[i] != "SetSpeed")
+                if (actions[i].Kind != ActionKind.Speed)
                     continue;
                 lo.Add(lastFloor);
-                hi.Add(floors[i]);
+                hi.Add(actions[i].Floor);
                 bpm.Add(lastBpm);
-                mult.Add(multiplier);
 
-                if (b[i] == 1.0)
-                {
-                    multiplier = a[i] / lastBpm;
-                    lastBpm = a[i];
-                }
-                else
-                {
-                    multiplier = a[i];
-                    lastBpm *= multiplier;
-                }
-                lastFloor = floors[i];
+                lastBpm = actions[i].ByBpm ? actions[i].Value : lastBpm * actions[i].Value;
+                lastFloor = actions[i].Floor;
             }
             lo.Add(lastFloor);
             hi.Add(floorCount - 1);
             bpm.Add(lastBpm);
-            mult.Add(multiplier);
 
             double globalMultiplier = baseBpm / levelBpm;
             for (int r = 0; r < lo.Count; r++)
@@ -525,19 +446,6 @@ namespace AdoFalling
             if (bpm > 840.0)
                 bpm /= 2.0;
             return bpm;
-        }
-
-        /// <summary>
-        /// The macro presses the outermost finger first (p4,p3,p2,p1), then moves inward; the
-        /// main hand walks lanes down, the other hand is mirrored. Groups over four presses
-        /// keep rolling around the four lanes.
-        /// </summary>
-        private static int LaneForFinger(bool preferred, int span, int j)
-        {
-            int step = (span - 1 - j) % FallingView.LaneCount;
-            if (step < 0)
-                step += FallingView.LaneCount;
-            return preferred ? step : (FallingView.LaneCount - 1 - step);
         }
 
         // ------------------------------------------------------------------ token helpers

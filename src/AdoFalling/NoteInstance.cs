@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
     /// <summary>One note in the falling timeline.</summary>
     internal struct NoteInstance
@@ -8,8 +8,19 @@ namespace AdoFalling
         /// <summary>Song time (seconds) at which the note must reach the judgement line.</summary>
         public double HitTime;
 
+        /// <summary>Display-only chord alignment; judgement always uses HitTime.</summary>
+        public bool IsChord;
+        public double VisualHitTime;
+        public double DisplayHitTime { get { return IsChord ? VisualHitTime : HitTime; } }
+
+        /// <summary>Local quarter-note duration, including tempo changes; 0 if unknown.</summary>
+        public double BeatSeconds;
+
         /// <summary>0 .. FallingView.LaneCount-1.</summary>
         public int Lane;
+
+        /// <summary>First note of the hand group chosen by the fingering planner.</summary>
+        public bool IsGroupStart;
 
         /// <summary>Signed distance in pixels from the judgement line (positive = above).</summary>
         public float DistancePx;

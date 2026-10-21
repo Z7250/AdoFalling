@@ -1,8 +1,7 @@
 using System;
 using System.Reflection;
-using UnityEngine;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
     /// <summary>
     /// Drives the game's own auto-play flag (RDC.auto) so a level plays itself.
@@ -13,10 +12,9 @@ namespace AdoFalling
     /// </summary>
     internal sealed class AutoPlayDriver
     {
-        private static bool _probed;
         private static MemberInfo _auto;
         private bool _applied;
-        private bool _failed;
+        private bool _previousValue;
 
         public string Status = "off";
 
@@ -27,42 +25,39 @@ namespace AdoFalling
             {
                 if (_applied)
                 {
-                    Set(false);
+                    if (!Set(_previousValue)) return;
                     _applied = false;
                     Status = "off";
                 }
                 return;
             }
 
-            if (_failed)
-                return;
-
-            if (!_probed)
-                Probe();
-            if (_failed)
-                return;
+            if (_auto == null) Probe();
+            if (_auto == null) return;
+            if (!_applied)
+            {
+                object value = GameReflection.Read(null, _auto);
+                _previousValue = Convert.ToBoolean(value);
+            }
 
             // Re-applied on every poll, deliberately: the game's RDC state is rebuilt when it
             // switches scenes, so setting it once at the title screen has no effect in a level.
-            Set(true);
+            if (!Set(true)) return;
             _applied = true;
             Status = "on (RDC.auto)";
         }
 
         private static void Probe()
         {
-            _probed = true;
             try
             {
-                Assembly asm = null;
-                foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies())
-                    if (a.GetName().Name == "Assembly-CSharp") { asm = a; break; }
-                Type t = asm != null ? GameState.FindType(asm, "RDC") : null;
+                Assembly asm = GameReflection.Assembly;
+                Type t = asm != null ? GameReflection.FindType(asm, "RDC") : null;
                 if (t == null)
                 {
                     return;
                 }
-                _auto = GameState.FindMember(t, "auto");
+                _auto = GameReflection.FindMember(t, "auto");
             }
             catch
             {
@@ -70,26 +65,19 @@ namespace AdoFalling
             }
         }
 
-        private static void Set(bool value)
+        private static bool Set(bool value)
         {
             if (_auto == null)
-                return;
+                return false;
             try
             {
-                PropertyInfo p = _auto as PropertyInfo;
-                if (p != null && p.CanWrite)
-                {
-                    p.SetValue(null, value, null);
-                    return;
-                }
-                FieldInfo f = _auto as FieldInfo;
-                if (f != null)
-                    f.SetValue(null, value);
+                return GameReflection.Write(null, _auto, value);
             }
             catch (Exception ex)
             {
                 FallingPlugin.Log.LogWarning("auto-play toggle failed: " + ex.Message);
             }
+            return false;
         }
 
         public bool Available { get { return _auto != null; } }

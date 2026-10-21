@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace AdoFalling
+namespace AdoFalling8K
 {
     /// <summary>
     /// Screen geometry for the falling overlay: lane positions, judgement line height and
@@ -9,7 +9,7 @@ namespace AdoFalling
     /// </summary>
     internal sealed class FallingView
     {
-        public const int LaneCount = 4;
+        public const int LaneCount = FingeringPlanner.LaneCount;
 
         /// <summary>Judgement line height from the bottom of the screen, in pixels.</summary>
         public float JudgeY { get; private set; }
@@ -54,15 +54,13 @@ namespace AdoFalling
 
             _laneW = c.LaneWidth.Value * refScale;
             float gap = c.LaneGap.Value * refScale;
-            float total = LaneCount * _laneW + (LaneCount - 1) * gap;
+            float centerGap = Mathf.Max(0f, c.FJGap.Value) * refScale;
+            float total = LaneCount * _laneW + (LaneCount - 1) * gap + centerGap;
             float x0 = (w - total) * 0.5f;
             for (int i = 0; i < LaneCount; i++)
             {
-                int idx = c.MirrorDirection.Value ? (LaneCount - 1 - i) : i;
-                // Lane order 0/2 and 1/3 swapped, as requested: lane 0 is drawn where lane 2
-                // used to be, lane 1 where lane 3 was, and vice versa.
-                idx ^= 2;
-                _laneX[i] = x0 + idx * (_laneW + gap);
+                _laneX[i] = x0 + i * (_laneW + gap)
+                    + (i >= FingeringPlanner.FingersPerHand ? centerGap : 0f);
             }
             JudgeY = c.JudgeLineY.Value * h;
         }
